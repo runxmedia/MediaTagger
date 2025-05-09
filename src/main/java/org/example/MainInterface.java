@@ -150,6 +150,12 @@ public class MainInterface {
 
                 if (file_chooser.showOpenDialog(btn_add) == JFileChooser.APPROVE_OPTION) {
                     for (File file : file_chooser.getSelectedFiles()) {
+                        if(file.getAbsolutePath().contains("RunMedia")){
+                            JOptionPane.showMessageDialog(frame, "Tagging files directly on the server is prohibited.\nPlease tag files on your local machine before copying them to the server.", "File Tag location", JOptionPane.WARNING_MESSAGE);
+                            selectedFiles.clear();
+                            lst_file_contents.setListData(selectedFiles.toArray());
+                            return;
+                        }
                         if (file.isFile() && isVideoOrPhoto(file)) {
                             selectedFiles.add(file);
                         } else if (file.isDirectory()) {
@@ -410,6 +416,12 @@ public class MainInterface {
                     @SuppressWarnings("unchecked")
                     List<File> droppedFiles = (List<File>) evt.getTransferable().getTransferData(DataFlavor.javaFileListFlavor);
                     for (File file : droppedFiles) {
+                        if(file.getAbsolutePath().contains("RunMedia")){
+                            JOptionPane.showMessageDialog(frame, "Media Tagger doesn't work with files on the server.\nPlease tag files on your local machine before copying them to the server.", "File Tag location", JOptionPane.WARNING_MESSAGE);
+                            selectedFiles.clear();
+                            lst_file_contents.setListData(selectedFiles.toArray());
+                            return;
+                        }
                         if (file.isFile() && isVideoOrPhoto(file)) {
                             selectedFiles.add(file);
                         } else if (file.isDirectory()) {
