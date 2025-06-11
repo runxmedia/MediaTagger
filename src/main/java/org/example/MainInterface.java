@@ -1,6 +1,5 @@
 package org.example;
 
-import javax.imageio.ImageIO;
 import javax.swing.*;
 import javax.swing.SwingWorker;
 import java.awt.*;
