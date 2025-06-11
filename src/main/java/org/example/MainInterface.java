@@ -88,6 +88,9 @@ public class MainInterface {
         frame.setLocationRelativeTo(null);
         frame.setSize(800, 800);
 
+        ai.djl.engine.Engine.debugEnvironment();
+
+
         ClassLoader classLoader = ClassLoader.getSystemClassLoader();
         ImageIcon icon_file = null;
         try { //setICON
