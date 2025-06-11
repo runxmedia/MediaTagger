@@ -9,17 +9,25 @@ import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
-import java.util.ArrayList;
-import java.util.Calendar;
+import java.util.*;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 
+import ai.djl.inference.Predictor;
+import ai.djl.modality.cv.ImageFactory;
+import ai.djl.modality.cv.output.DetectedObjects;
+import ai.djl.repository.zoo.Criteria;
+import ai.djl.repository.zoo.ZooModel;
+import ai.djl.training.util.ProgressBar;
+import ai.djl.translate.TranslateException;
 import org.json.JSONArray;
 import org.json.JSONObject;
+
+import ai.djl.modality.cv.translator.FaceDetectionTranslator;
+import ai.djl.modality.cv.translator.FaceFeatureTranslator;
 
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
@@ -63,6 +71,7 @@ public class MainInterface {
     private JComboBox combo_month;
     private JComboBox combo_day;
     private JComboBox combo_year;
+    private JButton btn_recognize_faces;
     private final JFrame frame;
 
     private JFileChooser file_chooser;
@@ -70,6 +79,11 @@ public class MainInterface {
     private ArrayList<String> tags;
     private ArrayList<String> people;
     private Location selectedLocation;
+
+    //Facial recognition variables
+    private Map<String, float[]> knownFaceEmbeddings;
+    private ZooModel<Image, DetectedObjects> detectionModel;
+    private ZooModel<Image, float[]> recognitionModel;
 
     // FFmpeg command depending on OS
     private final String ffmpegCommand;
@@ -113,6 +127,17 @@ public class MainInterface {
         }
         checkFFmpegInstallation();
 
+        // Initialize facial recognition components
+        new Thread(() -> {
+            try {
+                initializeModelsAndFaces();
+            } catch (Exception e) {
+                SwingUtilities.invokeLater(() -> {
+                    JOptionPane.showMessageDialog(frame, "Failed to initialize AI models: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                    e.printStackTrace();
+                });
+            }
+        }).start();
     }
 
     private void setupGUI(){
@@ -261,6 +286,13 @@ public class MainInterface {
                         ex.printStackTrace();
                     }
                 }
+            }
+        });
+
+        btn_recognize_faces.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                recognizeFacesInVideos();
             }
         });
 
@@ -763,5 +795,180 @@ private void addFilesFromDirectory(File directory) {
         public String toString() {
             return displayName;
         }
+    }
+
+    private void initializeModelsAndFaces() throws Exception {
+        // Load Face Detection Model
+        detectionModel = Criteria.builder()
+                .optEngine("OnnxRuntime")
+                .setTypes(Image.class, DetectedObjects.class)
+                .optModelUrls("https://resources.djl.ai/test-models/onnx/face_detection_ssd_10.onnx")
+                .optTranslator(new FaceDetectionTranslator(0.5f, 0.7f))
+                .optProgress(new ProgressBar())
+                .build().load();
+
+        // Load Face Recognition Model
+        recognitionModel = Criteria.builder()
+                .optEngine("OnnxRuntime")
+                .setTypes(Image.class, float[].class)
+                .optModelUrls("https://resources.djl.ai/test-models/onnx/face_recognition_sface_2021dec.onnx")
+                .optTranslator(new FaceFeatureTranslator())
+                .optProgress(new ProgressBar())
+                .build().load();
+
+        // Load known faces
+        loadKnownFaces();
+    }
+
+    private void loadKnownFaces() throws IOException {
+        knownFaceEmbeddings = new HashMap<>();
+        File knownFacesDir = new File("known-faces");
+
+        if (!knownFacesDir.exists() || !knownFacesDir.isDirectory()) {
+            SwingUtilities.invokeLater(() ->
+                    JOptionPane.showMessageDialog(frame, "Could not find the 'known-faces' directory.", "Warning", JOptionPane.WARNING_MESSAGE));
+            return;
+        }
+
+        File[] faceFiles = knownFacesDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".jpg"));
+        if (faceFiles == null) return;
+
+        for (File faceFile : faceFiles) {
+            String personName = faceFile.getName().substring(0, faceFile.getName().lastIndexOf('.'));
+            Image img = ImageFactory.getInstance().fromFile(faceFile.toPath());
+            try (Predictor<Image, float[]> recognizer = recognitionModel.newPredictor()) {
+                float[] embedding = recognizer.predict(img);
+                knownFaceEmbeddings.put(personName, embedding);
+            } catch (TranslateException e) {
+                e.printStackTrace();
+            }
+        }
+        System.out.println("Loaded " + knownFaceEmbeddings.size() + " known faces.");
+    }
+
+    private void recognizeFacesInVideos() {
+        if (selectedFiles.isEmpty()) {
+            JOptionPane.showMessageDialog(frame, "Please add video files first.", "No Videos", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        // --- Create a progress dialog ---
+        final JDialog progressDialog = new JDialog(frame, "Recognizing Faces...", true);
+        final JProgressBar progressBar = new JProgressBar(0, 100);
+        progressBar.setStringPainted(true);
+        progressDialog.getContentPane().add(progressBar);
+        progressDialog.pack();
+        progressDialog.setLocationRelativeTo(frame);
+
+        SwingWorker<Void, Integer> worker = new SwingWorker<>() {
+            @Override
+            protected Void doInBackground() throws Exception {
+                for (File file : selectedFiles) {
+                    if (file.getName().toLowerCase().endsWith(".mp4")) {
+                        processVideo(file, this);
+                    }
+                }
+                return null;
+            }
+
+            @Override
+            protected void done() {
+                progressDialog.dispose();
+                updatePeopleLabel(); // Update UI with recognized people
+                JOptionPane.showMessageDialog(frame, "Facial recognition complete.", "Finished", JOptionPane.INFORMATION_MESSAGE);
+            }
+        };
+
+        worker.execute();
+        progressDialog.setVisible(true);
+    }
+
+    private void processVideo(File videoFile, SwingWorker<Void, Integer> worker) {
+        // This is a placeholder for a more complex video processing logic.
+        // A full implementation would use a library like FFmpeg-Java-Wrapper or JCodec
+        // to extract frames one by one without saving them all to disk.
+        // For simplicity, this example just shows the core recognition logic on a single image.
+
+        // In a real implementation, you would loop through frames of the video here.
+        // Let's simulate this by just taking one frame (or a sample image)
+        try {
+            // As a simple example, we use the first known face image as a "frame"
+            File sampleFrameFile = new File("known-faces", "Jane Doe.jpg"); // Replace with actual frame extraction
+            Image frameImage = ImageFactory.getInstance().fromFile(sampleFrameFile.toPath());
+
+            recognizeFacesInFrame(frameImage);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+
+    private void recognizeFacesInFrame(Image frame) throws TranslateException {
+        try (Predictor<Image, DetectedObjects> detector = detectionModel.newPredictor();
+             Predictor<Image, float[]> recognizer = recognitionModel.newPredictor()) {
+
+            DetectedObjects detections = detector.predict(frame);
+            for (DetectedObjects.DetectedObject detected : detections.items()) {
+                // Crop the detected face from the main image
+                Image faceImage = getSubImage(frame, detected.getBoundingBox());
+
+                // Get the embedding for this detected face
+                float[] detectedEmbedding = recognizer.predict(faceImage);
+
+                // Compare with known faces
+                String bestMatch = findBestMatch(detectedEmbedding);
+                if (bestMatch != null && !people.contains(bestMatch)) {
+                    SwingUtilities.invokeLater(() -> {
+                        people.add(bestMatch);
+                        // No need to call updatePeopleLabel here, it will be called when the worker is done.
+                    });
+                }
+            }
+        }
+    }
+
+    private String findBestMatch(float[] detectedEmbedding) {
+        String bestMatchName = null;
+        float highestSimilarity = -1.0f;
+        // Cosine similarity threshold - adjust as needed
+        float threshold = 0.85f;
+
+        for (Map.Entry<String, float[]> entry : knownFaceEmbeddings.entrySet()) {
+            float similarity = cosineSimilarity(detectedEmbedding, entry.getValue());
+            if (similarity > highestSimilarity) {
+                highestSimilarity = similarity;
+                bestMatchName = entry.getKey();
+            }
+        }
+
+        if (highestSimilarity > threshold) {
+            return bestMatchName;
+        }
+        return null;
+    }
+
+    private float cosineSimilarity(float[] vec1, float[] vec2) {
+        float dotProduct = 0.0f;
+        float normA = 0.0f;
+        float normB = 0.0f;
+        for (int i = 0; i < vec1.length; i++) {
+            dotProduct += vec1[i] * vec2[i];
+            normA += vec1[i] * vec1[i];
+            normB += vec2[i] * vec2[i];
+        }
+        return (float) (dotProduct / (Math.sqrt(normA) * Math.sqrt(normB)));
+    }
+
+    private Image getSubImage(Image img, Rectangle box) {
+        int width = img.getWidth();
+        int height = img.getHeight();
+        int[] recovered = {
+                (int) (box.getX() * width),
+                (int) (box.getY() * height),
+                (int) (box.getWidth() * width),
+                (int) (box.getHeight() * height)
+        };
+        return img.getSubImage(recovered[0], recovered[1], recovered[2], recovered[3]);
     }
 }
