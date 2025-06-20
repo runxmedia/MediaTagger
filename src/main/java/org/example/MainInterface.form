@@ -218,6 +218,14 @@
           <grid row="11" column="3" row-span="1" col-span="1" vsize-policy="6" hsize-policy="1" anchor="0" fill="2" indent="0" use-parent-layout="false"/>
         </constraints>
       </vspacer>
+      <component id="c7c62" class="javax.swing.JButton" binding="btn_recognize_faces">
+        <constraints>
+          <grid row="0" column="5" row-span="1" col-span="1" vsize-policy="0" hsize-policy="3" anchor="0" fill="1" indent="0" use-parent-layout="false"/>
+        </constraints>
+        <properties>
+          <text value="Recognize Faces"/>
+        </properties>
+      </component>
     </children>
   </grid>
 </form>
