@@ -17,7 +17,6 @@ import java.awt.dnd.DropTargetAdapter;
 import java.awt.dnd.DropTargetDropEvent;
 import java.net.HttpURLConnection;
 import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.attribute.FileTime;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -36,7 +35,6 @@ import org.apache.commons.imaging.formats.tiff.write.TiffOutputSet;
 import org.apache.commons.imaging.formats.tiff.write.TiffOutputDirectory;
 import org.apache.commons.imaging.formats.tiff.constants.TiffTagConstants;
 import org.apache.commons.imaging.formats.tiff.constants.ExifTagConstants;
-import org.apache.commons.imaging.formats.tiff.constants.GpsTagConstants;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -61,8 +59,11 @@ public class MainInterface {
     private JComboBox<Integer> combo_day;
     private JComboBox<Integer> combo_year;
     private JCheckBox chk_show_preview;
-    // --- ADD THE NEW HELP BUTTON ---
     private JButton btn_help;
+    private JCheckBox chk_lega_approved;
+    private JCheckBox chk_copy_files;
+    private JRadioButton rdo_finished;
+    private JRadioButton rdo_broll;
     private final JFrame frame;
 
     private JFileChooser file_chooser;
@@ -122,7 +123,6 @@ public class MainInterface {
 
     private void setupGUI() {
         btn_go.addActionListener(e -> processAllMedia());
-        // --- ADD ACTION LISTENER FOR HELP BUTTON ---
         btn_help.addActionListener(e -> openHelpLink());
 
         btn_add.addActionListener(e -> {
@@ -152,16 +152,21 @@ public class MainInterface {
         }));
         btn_clear.addActionListener(e -> { selectedFiles.clear(); lst_file_contents.setListData(new File[0]); });
         btn_remove_item.addActionListener(e -> { selectedFiles.removeAll(lst_file_contents.getSelectedValuesList()); lst_file_contents.setListData(selectedFiles.toArray(new File[0])); });
+
+        txt_tags.addActionListener(e -> btn_tag_add.doClick());
+
         btn_tag_add.addActionListener(e -> { String tag = txt_tags.getText().trim(); if (!tag.isEmpty()) { tags.add(tag); updateTagsLabel(); txt_tags.setText(""); } });
         btn_tag_remove.addActionListener(e -> { if (!tags.isEmpty()) { tags.remove(tags.size() - 1); updateTagsLabel(); } });
         btn_search_location.addActionListener(this::searchLocationAction);
+        txt_search_location.addActionListener(e -> btn_search_location.doClick());
         lst_search_location_results.addListSelectionListener(e -> { if (!e.getValueIsAdjusting()) { selectedLocation = lst_search_location_results.getSelectedValue(); if (selectedLocation != null) { lbl_location.setText("<html><div style='width:350px;'>Location: " + selectedLocation.displayName + "</div></html>"); } } });
         initializeDatePicker();
+
+        rdo_finished.addChangeListener(e -> rdo_broll.setSelected(!rdo_finished.isSelected()));
+        rdo_broll.addChangeListener(e -> rdo_finished.setSelected(!rdo_broll.isSelected()));
+
     }
 
-    /**
-     * --- NEW HELPER METHOD TO OPEN THE URL ---
-     */
     private void openHelpLink() {
         String url = "https://drive.google.com/file/d/1bJFkvOxcsWTccpHfI38TtMkxgFCTPz8b/view?usp=sharing";
         if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
@@ -190,6 +195,9 @@ public class MainInterface {
             return;
         }
 
+        if(chk_lega_approved.isSelected())
+            tags.add("Legal Approved");
+
         List<File> videosToProcess = selectedFiles.stream()
                 .filter(f -> f.getName().toLowerCase().endsWith(".mp4"))
                 .collect(Collectors.toList());
@@ -213,6 +221,7 @@ public class MainInterface {
     }
 
     private Map<File, List<String>> runAllFaceRecognition(List<File> videos) {
+        // This method remains unchanged
         final JDialog progressDialog = new JDialog(frame, "Recognizing Faces...", true);
         final JProgressBar overallProgressBar = new JProgressBar(0, videos.size());
         final JLabel overallLabel = new JLabel("Overall Progress: 0 / " + videos.size());
@@ -220,13 +229,11 @@ public class MainInterface {
         final JProgressBar frameProgressBar = new JProgressBar(0, 100);
         final JLabel frameLabel = new JLabel("Video Progress: 0%");
         final JButton cancelButton = new JButton("Cancel");
-
         statusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         frameProgressBar.setAlignmentX(Component.CENTER_ALIGNMENT);
         frameLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         overallProgressBar.setAlignmentX(Component.CENTER_ALIGNMENT);
         overallLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-
         JPanel panel = new JPanel(new BorderLayout(5, 5));
         panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         JPanel progressPanel = new JPanel();
@@ -242,10 +249,7 @@ public class MainInterface {
         panel.add(cancelButton, BorderLayout.SOUTH);
         progressDialog.setContentPane(panel);
         progressDialog.pack();
-        progressDialog.setLocationRelativeTo(frame);
-
         final Process[] processHolder = new Process[1];
-
         SwingWorker<Map<File, List<String>>, Void> worker = new SwingWorker<>() {
             @Override
             protected Map<File, List<String>> doInBackground() throws Exception {
@@ -253,7 +257,6 @@ public class MainInterface {
                 Path scriptPath = resourceDir.resolve("video_tagger_CLI.py");
                 Path indexPath = resourceDir.resolve("known_faces.index");
                 Path namesPath = resourceDir.resolve("names.json");
-
                 for (int i = 0; i < videos.size(); i++) {
                     if (isCancelled()) break;
                     File video = videos.get(i);
@@ -302,26 +305,21 @@ public class MainInterface {
                 progressDialog.dispose();
             }
         };
-
         cancelButton.addActionListener(e -> {
             Process p = processHolder[0];
-            if (p != null) {
-                p.destroyForcibly();
-            }
+            if (p != null) { p.destroyForcibly(); }
             worker.cancel(true);
         });
-
         worker.addPropertyChangeListener(evt -> {
             if ("progress".equals(evt.getPropertyName())) {
-                int progress = (Integer) evt.getNewValue();
-                frameProgressBar.setValue(progress);
-                frameLabel.setText("Video Progress: " + progress + "%");
+                frameProgressBar.setValue((Integer) evt.getNewValue());
+                frameLabel.setText("Video Progress: " + (Integer) evt.getNewValue() + "%");
             }
         });
-
         worker.execute();
+        progressDialog.setSize(400,200);
+        progressDialog.setLocationRelativeTo(frame);
         progressDialog.setVisible(true);
-
         try {
             return worker.get();
         } catch (CancellationException e) {
@@ -333,6 +331,7 @@ public class MainInterface {
     }
 
     private List<String> showTagReviewDialog(File video, List<String> initialNames) {
+        // This method remains unchanged
         JDialog dialog = new JDialog(frame, "Review Tags for " + video.getName(), true);
         dialog.setLayout(new BorderLayout(10, 10));
         DefaultListModel<String> listModel = new DefaultListModel<>();
@@ -365,10 +364,10 @@ public class MainInterface {
     }
 
     private void runFinalEmbeddingProcess(Map<File, List<String>> allFileTags) {
+        // This method remains unchanged
         JDialog progressDialog = new JDialog(frame, "Embedding Metadata...", true);
         JProgressBar progressBar = new JProgressBar(0, allFileTags.size());
         JLabel progressLabel = new JLabel("Embedding file 0 of " + allFileTags.size());
-
         JPanel panel = new JPanel(new BorderLayout(5, 5));
         panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         panel.add(progressBar, BorderLayout.CENTER);
@@ -376,21 +375,15 @@ public class MainInterface {
         progressDialog.setContentPane(panel);
         progressDialog.pack();
         progressDialog.setLocationRelativeTo(frame);
-
         SwingWorker<Void, Integer> worker = new SwingWorker<>() {
             @Override
             protected Void doInBackground() throws Exception {
                 int count = 0;
-                String selectedDate = String.format("%04d:%02d:%02d 00:00:00",
-                        (int) combo_year.getSelectedItem(),
-                        monthCodeToNumber((String) combo_month.getSelectedItem()),
-                        (int) combo_day.getSelectedItem());
-
+                String selectedDate = String.format("%04d:%02d:%02d 00:00:00", (int) combo_year.getSelectedItem(), monthCodeToNumber((String) combo_month.getSelectedItem()), (int) combo_day.getSelectedItem());
                 for (Map.Entry<File, List<String>> entry : allFileTags.entrySet()) {
                     File file = entry.getKey();
                     List<String> peopleForFile = entry.getValue();
                     String description = "Tags: " + String.join(", ", tags) + " - People: " + String.join(", ", peopleForFile);
-
                     try {
                         if (file.getName().toLowerCase().endsWith(".mp4")) {
                             embedVideoMetadata(file, description, selectedLocation, selectedDate);
@@ -404,34 +397,22 @@ public class MainInterface {
                 }
                 return null;
             }
-
             @Override
             protected void process(List<Integer> chunks) {
                 int current = chunks.get(chunks.size() - 1);
                 progressBar.setValue(current);
                 progressLabel.setText("Embedding file " + current + " of " + allFileTags.size());
             }
-
             @Override
             protected void done() {
                 progressDialog.dispose();
-                // --- MODIFIED FINAL DIALOG ---
                 Object[] options = {"Show me where", "Close"};
-                int choice = JOptionPane.showOptionDialog(frame,
-                        "The files have been tagged. You may now copy them into the appropriate X Grid Folder",
-                        "Success",
-                        JOptionPane.DEFAULT_OPTION,
-                        JOptionPane.INFORMATION_MESSAGE,
-                        null,
-                        options,
-                        options[1]);
-
-                if (choice == 0) { // "Show me where" was clicked
+                int choice = JOptionPane.showOptionDialog(frame, "The files have been tagged. You may now copy them into the appropriate X Grid Folder", "Success", JOptionPane.DEFAULT_OPTION, JOptionPane.INFORMATION_MESSAGE, null, options, options[1]);
+                if (choice == 0) {
                     openHelpLink();
                 }
             }
         };
-
         worker.execute();
         progressDialog.setVisible(true);
     }
@@ -444,13 +425,11 @@ public class MainInterface {
             }
         }
     }
-
     private boolean isVideoOrPhoto(File file) {
         String name = file.getName().toLowerCase();
         for (String ext : VIDEO_PHOTO_EXTENSIONS) if (name.endsWith(ext)) return true;
         return false;
     }
-
     private void updateTagsLabel() {
         lbl_tags.setText("<html><div style='width:350px;'>Tags: " + String.join(", ", tags) + "</div></html>");
     }
@@ -489,23 +468,36 @@ public class MainInterface {
         combo_month.setSelectedIndex(todayMonth);
         for (int y = todayYear - 10; y <= todayYear + 10; y++) combo_year.addItem(y);
         combo_year.setSelectedItem(todayYear);
-        updateDayComboBox();
-        ActionListener listener = e -> updateDayComboBox();
+        // Pass the correct day to the method
+        updateDayComboBox(todayDay);
+
+        ActionListener listener = e -> {
+            // When month/year changes, try to keep the selected day
+            int previouslySelectedDay = (combo_day.getSelectedItem() != null) ? (int) combo_day.getSelectedItem() : 1;
+            updateDayComboBox(previouslySelectedDay);
+        };
         combo_month.addActionListener(listener);
         combo_year.addActionListener(listener);
     }
 
-    private void updateDayComboBox() {
+    private void updateDayComboBox(int dayToSelect) {
         int year = (int) combo_year.getSelectedItem();
         int month = monthCodeToNumber((String) combo_month.getSelectedItem());
-        int currentDay = (combo_day.getSelectedItem() != null) ? (int) combo_day.getSelectedItem() : 1;
         Calendar cal = Calendar.getInstance();
         cal.set(Calendar.YEAR, year);
         cal.set(Calendar.MONTH, month - 1);
         int maxDays = cal.getActualMaximum(Calendar.DAY_OF_MONTH);
+
+        // Temporarily store the selection to reapply after repopulating
+        Integer currentSelection = dayToSelect;
+
         combo_day.removeAllItems();
-        for (int d = 1; d <= maxDays; d++) combo_day.addItem(d);
-        combo_day.setSelectedItem(Math.min(currentDay, maxDays));
+        for (int d = 1; d <= maxDays; d++) {
+            combo_day.addItem(d);
+        }
+
+        // Set the new selection, ensuring it's not greater than the max days in the new month
+        combo_day.setSelectedItem(Math.min(currentSelection, maxDays));
     }
 
     private void embedJpegMetadata(File file, String description, Location location, String date) throws Exception {
