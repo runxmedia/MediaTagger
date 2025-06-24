@@ -17,6 +17,7 @@ import java.awt.dnd.DropTargetAdapter;
 import java.awt.dnd.DropTargetDropEvent;
 import java.net.HttpURLConnection;
 import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.attribute.FileTime;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -35,6 +36,7 @@ import org.apache.commons.imaging.formats.tiff.write.TiffOutputSet;
 import org.apache.commons.imaging.formats.tiff.write.TiffOutputDirectory;
 import org.apache.commons.imaging.formats.tiff.constants.TiffTagConstants;
 import org.apache.commons.imaging.formats.tiff.constants.ExifTagConstants;
+import org.apache.commons.imaging.formats.tiff.constants.GpsTagConstants;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -60,10 +62,10 @@ public class MainInterface {
     private JComboBox<Integer> combo_year;
     private JCheckBox chk_show_preview;
     private JButton btn_help;
-    private JCheckBox chk_lega_approved;
     private JCheckBox chk_copy_files;
     private JRadioButton rdo_finished;
     private JRadioButton rdo_broll;
+    private JCheckBox chk_lega_approved;
     private final JFrame frame;
 
     private JFileChooser file_chooser;
@@ -93,11 +95,8 @@ public class MainInterface {
 
         try {
             setupResources();
-            checkDependencies();
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(frame, "Failed to initialize: " + e.getMessage(), "Initialization Error", JOptionPane.ERROR_MESSAGE);
-            e.printStackTrace();
-            System.exit(1);
+            JOptionPane.showMessageDialog(frame, "Failed to initialize resources: " + e.getMessage(), "Initialization Error", JOptionPane.ERROR_MESSAGE);
         }
         setupGUI();
     }
@@ -108,17 +107,17 @@ public class MainInterface {
         if (!Files.exists(resourceDir)) {
             Files.createDirectories(resourceDir);
         }
-        String[] resourceFiles = {"video_tagger_CLI.py", "known_faces.index", "names.json", "install_dependencies.sh"};
+        String[] resourceFiles = {"video_tagger_CLI.py", "known_faces.index", "names.json", "install_dependencies.sh", "mount_server.sh"};
         for (String fileName : resourceFiles) {
+            Path scriptPath = resourceDir.resolve(fileName);
             try (InputStream in = getClass().getClassLoader().getResourceAsStream(fileName)) {
                 if (in == null) throw new IOException("Resource not found in JAR: " + fileName);
-                Files.copy(in, resourceDir.resolve(fileName), StandardCopyOption.REPLACE_EXISTING);
+                Files.copy(in, scriptPath, StandardCopyOption.REPLACE_EXISTING);
+                if (fileName.endsWith(".sh")) {
+                    new ProcessBuilder("chmod", "+x", scriptPath.toString()).start();
+                }
             }
         }
-    }
-
-    private void checkDependencies() {
-        // This method remains unchanged
     }
 
     private void setupGUI() {
@@ -150,21 +149,53 @@ public class MainInterface {
                 }
             }
         }));
-        btn_clear.addActionListener(e -> { selectedFiles.clear(); lst_file_contents.setListData(new File[0]); });
-        btn_remove_item.addActionListener(e -> { selectedFiles.removeAll(lst_file_contents.getSelectedValuesList()); lst_file_contents.setListData(selectedFiles.toArray(new File[0])); });
-
+        btn_clear.addActionListener(e -> {
+            selectedFiles.clear();
+            lst_file_contents.setListData(new File[0]);
+        });
+        btn_remove_item.addActionListener(e -> {
+            selectedFiles.removeAll(lst_file_contents.getSelectedValuesList());
+            lst_file_contents.setListData(selectedFiles.toArray(new File[0]));
+        });
         txt_tags.addActionListener(e -> btn_tag_add.doClick());
-
-        btn_tag_add.addActionListener(e -> { String tag = txt_tags.getText().trim(); if (!tag.isEmpty()) { tags.add(tag); updateTagsLabel(); txt_tags.setText(""); } });
-        btn_tag_remove.addActionListener(e -> { if (!tags.isEmpty()) { tags.remove(tags.size() - 1); updateTagsLabel(); } });
+        btn_tag_add.addActionListener(e -> {
+            String tag = txt_tags.getText().trim();
+            if (!tag.isEmpty()) {
+                tags.add(tag);
+                updateTagsLabel();
+                txt_tags.setText("");
+            }
+        });
+        btn_tag_remove.addActionListener(e -> {
+            if (!tags.isEmpty()) {
+                tags.remove(tags.size() - 1);
+                updateTagsLabel();
+            }
+        });
         btn_search_location.addActionListener(this::searchLocationAction);
         txt_search_location.addActionListener(e -> btn_search_location.doClick());
-        lst_search_location_results.addListSelectionListener(e -> { if (!e.getValueIsAdjusting()) { selectedLocation = lst_search_location_results.getSelectedValue(); if (selectedLocation != null) { lbl_location.setText("<html><div style='width:350px;'>Location: " + selectedLocation.displayName + "</div></html>"); } } });
+        lst_search_location_results.addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                selectedLocation = lst_search_location_results.getSelectedValue();
+                if (selectedLocation != null) {
+                    lbl_location.setText("<html><div style='width:350px;'>Location: " + selectedLocation.displayName + "</div></html>");
+                }
+            }
+        });
+
+        ButtonGroup copyGroup = new ButtonGroup();
+        copyGroup.add(rdo_finished);
+        copyGroup.add(rdo_broll);
+        rdo_finished.setSelected(true);
+
+        chk_copy_files.addActionListener(e -> {
+            boolean selected = chk_copy_files.isSelected();
+            rdo_finished.setEnabled(selected);
+            rdo_broll.setEnabled(selected);
+        });
+        chk_copy_files.getActionListeners()[0].actionPerformed(null);
+
         initializeDatePicker();
-
-        rdo_finished.addChangeListener(e -> rdo_broll.setSelected(!rdo_finished.isSelected()));
-        rdo_broll.addChangeListener(e -> rdo_finished.setSelected(!rdo_broll.isSelected()));
-
     }
 
     private void openHelpLink() {
@@ -194,9 +225,9 @@ public class MainInterface {
             JOptionPane.showMessageDialog(frame, "Please add at least one tag and select a location.", "Warning", JOptionPane.WARNING_MESSAGE);
             return;
         }
-
-        if(chk_lega_approved.isSelected())
-            tags.add("Legal Approved");
+        if (chk_lega_approved.isSelected()) {
+            tags.add("Reviewed by Legal");
+        }
 
         List<File> videosToProcess = selectedFiles.stream()
                 .filter(f -> f.getName().toLowerCase().endsWith(".mp4"))
@@ -221,10 +252,9 @@ public class MainInterface {
     }
 
     private Map<File, List<String>> runAllFaceRecognition(List<File> videos) {
-        // This method remains unchanged
         final JDialog progressDialog = new JDialog(frame, "Recognizing Faces...", true);
-        final JProgressBar overallProgressBar = new JProgressBar(0, videos.size());
-        final JLabel overallLabel = new JLabel("Overall Progress: 0 / " + videos.size());
+        final JProgressBar overallProgressBar = new JProgressBar(0, videos.size() * 100);
+        final JLabel overallLabel = new JLabel("Overall Progress");
         final JLabel statusLabel = new JLabel("Starting...");
         final JProgressBar frameProgressBar = new JProgressBar(0, 100);
         final JLabel frameLabel = new JLabel("Video Progress: 0%");
@@ -248,8 +278,10 @@ public class MainInterface {
         panel.add(progressPanel, BorderLayout.CENTER);
         panel.add(cancelButton, BorderLayout.SOUTH);
         progressDialog.setContentPane(panel);
-        progressDialog.pack();
+        progressDialog.setSize(400, 200);
+        progressDialog.setLocationRelativeTo(frame);
         final Process[] processHolder = new Process[1];
+        final int[] currentVideoIndex = {0};
         SwingWorker<Map<File, List<String>>, Void> worker = new SwingWorker<>() {
             @Override
             protected Map<File, List<String>> doInBackground() throws Exception {
@@ -259,13 +291,10 @@ public class MainInterface {
                 Path namesPath = resourceDir.resolve("names.json");
                 for (int i = 0; i < videos.size(); i++) {
                     if (isCancelled()) break;
+                    currentVideoIndex[0] = i;
                     File video = videos.get(i);
                     final int currentVideoNum = i + 1;
-                    SwingUtilities.invokeLater(() -> {
-                        overallProgressBar.setValue(currentVideoNum);
-                        overallLabel.setText("Overall Progress: " + currentVideoNum + " / " + videos.size());
-                        statusLabel.setText("Processing: " + video.getName());
-                    });
+                    SwingUtilities.invokeLater(() -> statusLabel.setText("Processing: " + video.getName()));
                     ArrayList<String> command = new ArrayList<>();
                     command.add("python3");
                     command.add(scriptPath.toString());
@@ -307,18 +336,23 @@ public class MainInterface {
         };
         cancelButton.addActionListener(e -> {
             Process p = processHolder[0];
-            if (p != null) { p.destroyForcibly(); }
+            if (p != null) {
+                p.destroyForcibly();
+            }
             worker.cancel(true);
         });
         worker.addPropertyChangeListener(evt -> {
             if ("progress".equals(evt.getPropertyName())) {
-                frameProgressBar.setValue((Integer) evt.getNewValue());
-                frameLabel.setText("Video Progress: " + (Integer) evt.getNewValue() + "%");
+                int frameProgress = (Integer) evt.getNewValue();
+                frameProgressBar.setValue(frameProgress);
+                frameLabel.setText("Video Progress: " + frameProgress + "%");
+                int videoBaseProgress = currentVideoIndex[0] * 100;
+                int overallProgress = videoBaseProgress + frameProgress;
+                overallProgressBar.setValue(overallProgress);
+                overallLabel.setText("Overall Progress: " + (currentVideoIndex[0] + 1) + " / " + videos.size());
             }
         });
         worker.execute();
-        progressDialog.setSize(400,200);
-        progressDialog.setLocationRelativeTo(frame);
         progressDialog.setVisible(true);
         try {
             return worker.get();
@@ -331,7 +365,6 @@ public class MainInterface {
     }
 
     private List<String> showTagReviewDialog(File video, List<String> initialNames) {
-        // This method remains unchanged
         JDialog dialog = new JDialog(frame, "Review Tags for " + video.getName(), true);
         dialog.setLayout(new BorderLayout(10, 10));
         DefaultListModel<String> listModel = new DefaultListModel<>();
@@ -353,10 +386,26 @@ public class MainInterface {
         dialog.add(inputPanel, BorderLayout.NORTH);
         dialog.add(buttonPanel, BorderLayout.SOUTH);
         final List<String> confirmedNames = new ArrayList<>();
-        addButton.addActionListener(e -> { String newName = nameField.getText().trim(); if (!newName.isEmpty() && !listModel.contains(newName)) { listModel.addElement(newName); nameField.setText(""); } });
+        addButton.addActionListener(e -> {
+            String newName = nameField.getText().trim();
+            if (!newName.isEmpty() && !listModel.contains(newName)) {
+                listModel.addElement(newName);
+                nameField.setText("");
+            }
+        });
         nameField.addActionListener(e -> addButton.doClick());
-        removeButton.addActionListener(e -> { int[] selectedIndices = nameList.getSelectedIndices(); for (int i = selectedIndices.length - 1; i >= 0; i--) { listModel.removeElementAt(selectedIndices[i]); } });
-        confirmButton.addActionListener(e -> { for (int i = 0; i < listModel.getSize(); i++) { confirmedNames.add(listModel.getElementAt(i)); } dialog.dispose(); });
+        removeButton.addActionListener(e -> {
+            int[] selectedIndices = nameList.getSelectedIndices();
+            for (int i = selectedIndices.length - 1; i >= 0; i--) {
+                listModel.removeElementAt(selectedIndices[i]);
+            }
+        });
+        confirmButton.addActionListener(e -> {
+            for (int i = 0; i < listModel.getSize(); i++) {
+                confirmedNames.add(listModel.getElementAt(i));
+            }
+            dialog.dispose();
+        });
         dialog.setSize(400, 500);
         dialog.setLocationRelativeTo(frame);
         dialog.setVisible(true);
@@ -364,7 +413,6 @@ public class MainInterface {
     }
 
     private void runFinalEmbeddingProcess(Map<File, List<String>> allFileTags) {
-        // This method remains unchanged
         JDialog progressDialog = new JDialog(frame, "Embedding Metadata...", true);
         JProgressBar progressBar = new JProgressBar(0, allFileTags.size());
         JLabel progressLabel = new JLabel("Embedding file 0 of " + allFileTags.size());
@@ -397,19 +445,25 @@ public class MainInterface {
                 }
                 return null;
             }
+
             @Override
             protected void process(List<Integer> chunks) {
                 int current = chunks.get(chunks.size() - 1);
                 progressBar.setValue(current);
                 progressLabel.setText("Embedding file " + current + " of " + allFileTags.size());
             }
+
             @Override
             protected void done() {
                 progressDialog.dispose();
-                Object[] options = {"Show me where", "Close"};
-                int choice = JOptionPane.showOptionDialog(frame, "The files have been tagged. You may now copy them into the appropriate X Grid Folder", "Success", JOptionPane.DEFAULT_OPTION, JOptionPane.INFORMATION_MESSAGE, null, options, options[1]);
-                if (choice == 0) {
-                    openHelpLink();
+                if (chk_copy_files.isSelected()) {
+                    copyFilesToServer();
+                } else {
+                    Object[] options = {"Show me where", "Close"};
+                    int choice = JOptionPane.showOptionDialog(frame, "The files have been tagged. You may now copy them into the appropriate X Grid Folder", "Success", JOptionPane.DEFAULT_OPTION, JOptionPane.INFORMATION_MESSAGE, null, options, options[1]);
+                    if (choice == 0) {
+                        openHelpLink();
+                    }
                 }
             }
         };
@@ -417,19 +471,106 @@ public class MainInterface {
         progressDialog.setVisible(true);
     }
 
+    private void copyFilesToServer() {
+        Path runMediaPath = Paths.get("/Volumes/RunMedia/");
+        if (!Files.exists(runMediaPath)) {
+                try {
+                    Process p = new ProcessBuilder("bash", resourceDir.resolve("mount_server.sh").toString()).start();
+                    p.waitFor();
+                } catch (IOException | InterruptedException e) {
+                    e.printStackTrace();
+                }
+        }
+        if (!Files.exists(runMediaPath)) {
+            JOptionPane.showMessageDialog(frame, "Could not copy files. The server could not be connected.", "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        Path destinationPath;
+        int year = (int) combo_year.getSelectedItem();
+        if (rdo_finished.isSelected()) {
+            destinationPath = Paths.get("/Volumes/RunMedia/XGridLibrary/" + year + "/");
+        } else {
+            String projectName = JOptionPane.showInputDialog(frame, "Enter the Project Name for the B-Roll folder:", "B-Roll Project Name", JOptionPane.PLAIN_MESSAGE);
+            if (projectName == null || projectName.trim().isEmpty()) {
+                JOptionPane.showMessageDialog(frame, "Copy canceled: Project name cannot be empty.", "Canceled", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            int month = monthCodeToNumber((String) combo_month.getSelectedItem());
+            String folderName = String.format("%d_%02d_%s", year, month, projectName.trim().replace(" ", "_"));
+            destinationPath = Paths.get("/Volumes/RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName + "/");
+        }
+        try {
+            Files.createDirectories(destinationPath);
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(frame, "Could not create destination directory:\n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        JDialog copyProgressDialog = new JDialog(frame, "Copying Files...", true);
+        JProgressBar copyProgressBar = new JProgressBar(0, 100);
+        JLabel copyLabel = new JLabel("Starting copy...");
+        JPanel panel = new JPanel(new BorderLayout(5, 5));
+        panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        panel.add(copyLabel, BorderLayout.NORTH);
+        panel.add(copyProgressBar, BorderLayout.CENTER);
+        copyProgressDialog.setContentPane(panel);
+        copyProgressDialog.setSize(400, 200);
+        copyProgressDialog.setLocationRelativeTo(frame);
+        SwingWorker<Void, Long> copyWorker = new SwingWorker<>() {
+            final long totalBytes = selectedFiles.stream().mapToLong(File::length).sum();
+            long copiedBytes = 0;
+
+            @Override
+            protected Void doInBackground() throws Exception {
+                byte[] buffer = new byte[8192];
+                for (File sourceFile : selectedFiles) {
+                    Path destFile = destinationPath.resolve(sourceFile.getName());
+                    SwingUtilities.invokeLater(() -> copyLabel.setText("Copying: " + sourceFile.getName()));
+                    try (InputStream in = new FileInputStream(sourceFile);
+                         OutputStream out = new FileOutputStream(destFile.toFile())) {
+                        int bytesRead;
+                        while ((bytesRead = in.read(buffer)) != -1) {
+                            out.write(buffer, 0, bytesRead);
+                            copiedBytes += bytesRead;
+                            publish((copiedBytes * 100) / totalBytes);
+                        }
+                    }
+                }
+                return null;
+            }
+
+            @Override
+            protected void process(List<Long> chunks) {
+                copyProgressBar.setValue(chunks.get(chunks.size() - 1).intValue());
+            }
+
+            @Override
+            protected void done() {
+                copyProgressDialog.dispose();
+                JOptionPane.showMessageDialog(frame, "File copy complete!", "Success", JOptionPane.INFORMATION_MESSAGE);
+            }
+        };
+        copyWorker.execute();
+        copyProgressDialog.setVisible(true);
+    }
+
     private void addFilesFromDirectory(File directory) {
         if (directory.isDirectory()) {
             File[] files = directory.listFiles();
             if (files != null) {
-                for (File file : files) { addFileOrDirectory(file); }
+                for (File file : files) {
+                    addFileOrDirectory(file);
+                }
             }
         }
     }
+
     private boolean isVideoOrPhoto(File file) {
         String name = file.getName().toLowerCase();
-        for (String ext : VIDEO_PHOTO_EXTENSIONS) if (name.endsWith(ext)) return true;
+        for (String ext : VIDEO_PHOTO_EXTENSIONS)
+            if (name.endsWith(ext)) return true;
         return false;
     }
+
     private void updateTagsLabel() {
         lbl_tags.setText("<html><div style='width:350px;'>Tags: " + String.join(", ", tags) + "</div></html>");
     }
@@ -468,11 +609,8 @@ public class MainInterface {
         combo_month.setSelectedIndex(todayMonth);
         for (int y = todayYear - 10; y <= todayYear + 10; y++) combo_year.addItem(y);
         combo_year.setSelectedItem(todayYear);
-        // Pass the correct day to the method
         updateDayComboBox(todayDay);
-
         ActionListener listener = e -> {
-            // When month/year changes, try to keep the selected day
             int previouslySelectedDay = (combo_day.getSelectedItem() != null) ? (int) combo_day.getSelectedItem() : 1;
             updateDayComboBox(previouslySelectedDay);
         };
@@ -487,16 +625,11 @@ public class MainInterface {
         cal.set(Calendar.YEAR, year);
         cal.set(Calendar.MONTH, month - 1);
         int maxDays = cal.getActualMaximum(Calendar.DAY_OF_MONTH);
-
-        // Temporarily store the selection to reapply after repopulating
         Integer currentSelection = dayToSelect;
-
         combo_day.removeAllItems();
         for (int d = 1; d <= maxDays; d++) {
             combo_day.addItem(d);
         }
-
-        // Set the new selection, ensuring it's not greater than the max days in the new month
         combo_day.setSelectedItem(Math.min(currentSelection, maxDays));
     }
 
@@ -507,7 +640,8 @@ public class MainInterface {
             if (jpegMetadata != null && jpegMetadata.getExif() != null) {
                 outputSet = jpegMetadata.getExif().getOutputSet();
             }
-        } catch (Exception e) { /* Ignore */ }
+        } catch (Exception e) { /* Ignore */
+        }
         if (outputSet == null) outputSet = new TiffOutputSet();
         TiffOutputDirectory rootDirectory = outputSet.getOrCreateRootDirectory();
         rootDirectory.removeField(TiffTagConstants.TIFF_TAG_IMAGE_DESCRIPTION);
@@ -515,7 +649,8 @@ public class MainInterface {
         TiffOutputDirectory exifSubIFD = outputSet.getOrCreateExifDirectory();
         exifSubIFD.removeField(ExifTagConstants.EXIF_TAG_DATE_TIME_ORIGINAL);
         exifSubIFD.add(ExifTagConstants.EXIF_TAG_DATE_TIME_ORIGINAL, date);
-        if (location != null) outputSet.setGPSInDegrees(Double.parseDouble(location.lon), Double.parseDouble(location.lat));
+        if (location != null)
+            outputSet.setGPSInDegrees(Double.parseDouble(location.lon), Double.parseDouble(location.lat));
         File tempFile = new File(file.getParent(), "temp_" + file.getName());
         try (OutputStream os = new BufferedOutputStream(new FileOutputStream(tempFile))) {
             new ExifRewriter().updateExifMetadataLossless(file, os, outputSet);
@@ -562,8 +697,16 @@ public class MainInterface {
         String displayName;
         String lat;
         String lon;
-        public Location(String displayName, String lat, String lon) { this.displayName = displayName; this.lat = lat; this.lon = lon; }
+
+        public Location(String displayName, String lat, String lon) {
+            this.displayName = displayName;
+            this.lat = lat;
+            this.lon = lon;
+        }
+
         @Override
-        public String toString() { return displayName; }
+        public String toString() {
+            return displayName;
+        }
     }
 }
