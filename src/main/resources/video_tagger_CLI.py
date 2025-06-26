@@ -60,13 +60,22 @@ def process_video_from_index(app, faiss_index, names, ffmpeg_path, ffprobe_path,
 
     # MODIFIED: Use the full path to ffmpeg passed as an argument
     ffmpeg_cmd = [ffmpeg_path, '-hwaccel', 'videotoolbox', '-i', args.video_path]
+
     if args.resize_width > 0:
-        ffmpeg_cmd.extend(['-vf', f'scale={args.resize_width}:-1'])
-        width, height = args.resize_width, int(original_height * (args.resize_width / original_width))
+        width = args.resize_width
+        # Calculate the corresponding height, maintaining aspect ratio.
+        new_height_float = original_height * (width / original_width)
+        # Round the height to the nearest even integer to match ffmpeg's behavior
+        # and satisfy hardware acceleration constraints.
+        height = int(round(new_height_float / 2) * 2)
+
+        # Explicitly provide the calculated width AND height to ffmpeg.
+        ffmpeg_cmd.extend(['-vf', f'scale={width}:{height}'])
     else:
         width, height = original_width, original_height
+
     ffmpeg_cmd.extend(['-f', 'image2pipe', '-pix_fmt', 'bgr24', '-vcodec', 'rawvideo', '-'])
-    process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     frame_size = width * height * 3
     found_faces_set = set()
     frame_count = 0
