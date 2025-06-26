@@ -17,7 +17,6 @@ import java.awt.dnd.DropTargetAdapter;
 import java.awt.dnd.DropTargetDropEvent;
 import java.net.HttpURLConnection;
 import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.attribute.FileTime;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -36,11 +35,11 @@ import org.apache.commons.imaging.formats.tiff.write.TiffOutputSet;
 import org.apache.commons.imaging.formats.tiff.write.TiffOutputDirectory;
 import org.apache.commons.imaging.formats.tiff.constants.TiffTagConstants;
 import org.apache.commons.imaging.formats.tiff.constants.ExifTagConstants;
-import org.apache.commons.imaging.formats.tiff.constants.GpsTagConstants;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class MainInterface {
+    // UI Components
     private JScrollPane lst_files;
     private JButton btn_clear;
     private JButton btn_add;
@@ -66,39 +65,155 @@ public class MainInterface {
     private JRadioButton rdo_finished;
     private JRadioButton rdo_broll;
     private JCheckBox chk_lega_approved;
+    private JCheckBox chk_safety;
     private final JFrame frame;
 
+    // Class members
     private JFileChooser file_chooser;
     private ArrayList<File> selectedFiles;
     private ArrayList<String> tags;
     private Location selectedLocation;
-    private final String ffmpegCommand = "ffmpeg";
-    private static final String[] VIDEO_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".mp4"};
     private Path resourceDir;
+    private String pythonExecutablePath;
+    private String ffmpegExecutablePath;
+    private String ffprobeExecutablePath;
+    private static final String[] VIDEO_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".mp4"};
+
+    // --- NEW: Add a member variable for the loaded icon ---
+    private Image appIcon;
 
     public static void main(String[] args) {
+        System.setProperty("apple.awt.application.name", "Media Tagger");
         new MainInterface();
     }
 
+    // --- NEW: Create a helper method to load the icon ---
+    private Image loadAppIcon() {
+        URL iconURL = getClass().getClassLoader().getResource("app_icon.png");
+        if (iconURL != null) {
+            return new ImageIcon(iconURL).getImage();
+        } else {
+            System.err.println("Could not find app_icon.png in resources.");
+            return null;
+        }
+    }
+
     public MainInterface() {
+        this.appIcon = loadAppIcon();
         frame = new JFrame();
+        if (this.appIcon != null) {
+            frame.setIconImage(this.appIcon);
+        }
+
+        // Initialize non-GUI components first
+        file_chooser = new JFileChooser();
+        selectedFiles = new ArrayList<>();
+        tags = new ArrayList<>();
+
+        // Setup resources, including the script to be run
+        try {
+            setupResources();
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(frame, "Failed to initialize resources: " + e.getMessage(), "Initialization Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
+            System.exit(1);
+        }
+
+        // Run the startup script
+        runStartupScript();
+
+        // Now, verify dependencies are present
+        pythonExecutablePath = findExecutable("python3");
+        ffmpegExecutablePath = findExecutable("ffmpeg");
+        ffprobeExecutablePath = findExecutable("ffprobe");
+        if (pythonExecutablePath == null || ffmpegExecutablePath == null || ffprobeExecutablePath == null) {
+            String missing = "a required dependency";
+            if(pythonExecutablePath == null) missing = "python3";
+            else if(ffmpegExecutablePath == null) missing = "ffmpeg";
+            else if(ffprobeExecutablePath == null) missing = "ffprobe";
+
+            JOptionPane.showMessageDialog(frame,
+                    "Error: Could not find '" + missing + "' in common paths (/opt/homebrew/bin, /usr/local/bin, /usr/bin) after running installer.\n" +
+                            "Please ensure dependencies (python3, ffmpeg) are installed correctly.",
+                    "Dependency Not Found", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
+            System.exit(1);
+        }
+
+        // All checks passed, setup the GUI and show the window
+        setupGUI();
         frame.setContentPane(pnl_main_interface);
         frame.setTitle("Media Tagger");
         frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         frame.setLocationRelativeTo(null);
         frame.setSize(800, 800);
         frame.setVisible(true);
+    }
 
-        file_chooser = new JFileChooser();
-        selectedFiles = new ArrayList<>();
-        tags = new ArrayList<>();
-
-        try {
-            setupResources();
-        } catch (Exception e) {
-            JOptionPane.showMessageDialog(frame, "Failed to initialize resources: " + e.getMessage(), "Initialization Error", JOptionPane.ERROR_MESSAGE);
+    private void runStartupScript() {
+        JDialog waitDialog = new JDialog(frame, "Startup Routine", true);
+        if (this.appIcon != null) {
+            waitDialog.setIconImage(this.appIcon);
         }
-        setupGUI();
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+        panel.add(new JLabel("Performing first start routine, please wait..."), BorderLayout.CENTER);
+        waitDialog.setContentPane(panel);
+        waitDialog.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+        waitDialog.pack();
+        waitDialog.setLocationRelativeTo(frame);
+
+        SwingWorker<Integer, Void> worker = new SwingWorker<>() {
+            private String errorOutput = "";
+
+            @Override
+            protected Integer doInBackground() throws Exception {
+                Path scriptPath = resourceDir.resolve("install_dependencies.sh");
+                ProcessBuilder pb = new ProcessBuilder("bash", scriptPath.toString());
+                Process process = pb.start();
+
+                try (BufferedReader errorReader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+                    errorOutput = errorReader.lines().collect(Collectors.joining("\n"));
+                }
+
+                return process.waitFor();
+            }
+
+            @Override
+            protected void done() {
+                waitDialog.dispose();
+                try {
+                    int exitCode = get();
+                    if (exitCode != 0) {
+                        String errorMessage = "The startup script failed (exit code: " + exitCode + ").\n\n";
+                        if (!errorOutput.isBlank()) {
+                            errorMessage += "Error output:\n" + errorOutput + "\n\n";
+                        }
+                        errorMessage += "Please ensure you have an internet connection and the necessary permissions, then restart the application.";
+                        JOptionPane.showMessageDialog(frame, errorMessage, "Installation Failed", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
+                        System.exit(1);
+                    }
+                } catch (CancellationException | InterruptedException | ExecutionException e) {
+                    e.printStackTrace();
+                    JOptionPane.showMessageDialog(frame,
+                            "An unexpected error occurred during the startup routine:\n" + e.getMessage(),
+                            "Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
+                    System.exit(1);
+                }
+            }
+        };
+
+        worker.execute();
+        waitDialog.setVisible(true); // This blocks until the dialog is disposed.
+    }
+
+    private String findExecutable(String name) {
+        String[] commonPaths = {"/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"};
+        for (String p : commonPaths) {
+            Path fullPath = Paths.get(p, name);
+            if (Files.isExecutable(fullPath)) {
+                return fullPath.toString();
+            }
+        }
+        return null;
     }
 
     private void setupResources() throws IOException {
@@ -121,9 +236,20 @@ public class MainInterface {
     }
 
     private void setupGUI() {
+        // Set a custom cell renderer to display only the file name
+        lst_file_contents.setCellRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+                Component renderer = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+                if (renderer instanceof JLabel && value instanceof File) {
+                    ((JLabel) renderer).setText(((File) value).getName());
+                }
+                return renderer;
+            }
+        });
+
         btn_go.addActionListener(e -> processAllMedia());
         btn_help.addActionListener(e -> openHelpLink());
-
         btn_add.addActionListener(e -> {
             file_chooser.setDialogTitle("Select Photos and Videos to add");
             file_chooser.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);
@@ -139,6 +265,7 @@ public class MainInterface {
             public void drop(DropTargetDropEvent evt) {
                 try {
                     evt.acceptDrop(DnDConstants.ACTION_COPY);
+                    @SuppressWarnings("unchecked")
                     List<File> droppedFiles = (List<File>) evt.getTransferable().getTransferData(DataFlavor.javaFileListFlavor);
                     for (File file : droppedFiles) {
                         addFileOrDirectory(file);
@@ -160,8 +287,16 @@ public class MainInterface {
         txt_tags.addActionListener(e -> btn_tag_add.doClick());
         btn_tag_add.addActionListener(e -> {
             String tag = txt_tags.getText().trim();
-            if (!tag.isEmpty()) {
-                tags.add(tag);
+            String[] potentialTags = tag.split(",");
+
+            for (String singleTag : potentialTags) {
+                String trimmedTag = singleTag.trim();
+
+                if (!trimmedTag.isEmpty()) {
+                    tags.add(trimmedTag);
+                }
+            }
+            if (!tag.trim().isEmpty()) {
                 updateTagsLabel();
                 txt_tags.setText("");
             }
@@ -182,19 +317,16 @@ public class MainInterface {
                 }
             }
         });
-
         ButtonGroup copyGroup = new ButtonGroup();
         copyGroup.add(rdo_finished);
         copyGroup.add(rdo_broll);
         rdo_finished.setSelected(true);
-
         chk_copy_files.addActionListener(e -> {
             boolean selected = chk_copy_files.isSelected();
             rdo_finished.setEnabled(selected);
             rdo_broll.setEnabled(selected);
         });
         chk_copy_files.getActionListeners()[0].actionPerformed(null);
-
         initializeDatePicker();
     }
 
@@ -205,10 +337,7 @@ public class MainInterface {
                 Desktop.getDesktop().browse(new URI(url));
             } catch (IOException | URISyntaxException ex) {
                 ex.printStackTrace();
-                JOptionPane.showMessageDialog(frame, "Could not open the help link.", "Error", JOptionPane.ERROR_MESSAGE);
             }
-        } else {
-            JOptionPane.showMessageDialog(frame, "Could not open link, browser not supported.", "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -222,23 +351,23 @@ public class MainInterface {
 
     private void processAllMedia() {
         if (tags.isEmpty() || selectedLocation == null) {
-            JOptionPane.showMessageDialog(frame, "Please add at least one tag and select a location.", "Warning", JOptionPane.WARNING_MESSAGE);
+            JOptionPane.showMessageDialog(frame, "Please add at least one tag and select a location.", "Warning", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
             return;
         }
         if (chk_lega_approved.isSelected()) {
             tags.add("Reviewed by Legal");
         }
-
+        if(chk_safety.isSelected()){
+            tags.add("Reviewed by Safety");
+        }
         List<File> videosToProcess = selectedFiles.stream()
                 .filter(f -> f.getName().toLowerCase().endsWith(".mp4"))
                 .collect(Collectors.toList());
-
         Map<File, List<String>> recognizedTags = runAllFaceRecognition(videosToProcess);
         if (recognizedTags == null) {
             System.out.println("Face recognition was canceled or failed.");
             return;
         }
-
         Map<File, List<String>> confirmedTags = new LinkedHashMap<>();
         for (File file : selectedFiles) {
             List<String> peopleTags = recognizedTags.getOrDefault(file, new ArrayList<>());
@@ -247,12 +376,14 @@ public class MainInterface {
             }
             confirmedTags.put(file, peopleTags);
         }
-
         runFinalEmbeddingProcess(confirmedTags);
     }
 
     private Map<File, List<String>> runAllFaceRecognition(List<File> videos) {
         final JDialog progressDialog = new JDialog(frame, "Recognizing Faces...", true);
+        if (this.appIcon != null) {
+            progressDialog.setIconImage(this.appIcon);
+        }
         final JProgressBar overallProgressBar = new JProgressBar(0, videos.size() * 100);
         final JLabel overallLabel = new JLabel("Overall Progress");
         final JLabel statusLabel = new JLabel("Starting...");
@@ -282,6 +413,7 @@ public class MainInterface {
         progressDialog.setLocationRelativeTo(frame);
         final Process[] processHolder = new Process[1];
         final int[] currentVideoIndex = {0};
+
         SwingWorker<Map<File, List<String>>, Void> worker = new SwingWorker<>() {
             @Override
             protected Map<File, List<String>> doInBackground() throws Exception {
@@ -289,40 +421,62 @@ public class MainInterface {
                 Path scriptPath = resourceDir.resolve("video_tagger_CLI.py");
                 Path indexPath = resourceDir.resolve("known_faces.index");
                 Path namesPath = resourceDir.resolve("names.json");
+
                 for (int i = 0; i < videos.size(); i++) {
                     if (isCancelled()) break;
                     currentVideoIndex[0] = i;
                     File video = videos.get(i);
-                    final int currentVideoNum = i + 1;
-                    SwingUtilities.invokeLater(() -> statusLabel.setText("Processing: " + video.getName()));
+                    final String videoName = video.getName();
+                    SwingUtilities.invokeLater(() -> statusLabel.setText("Processing: " + videoName));
+
                     ArrayList<String> command = new ArrayList<>();
-                    command.add("python3");
+                    command.add(pythonExecutablePath);
                     command.add(scriptPath.toString());
                     command.add(video.getAbsolutePath());
                     command.add(indexPath.toString());
                     command.add(namesPath.toString());
+                    command.add("--ffmpeg-path");
+                    command.add(ffmpegExecutablePath);
+                    command.add("--ffprobe-path");
+                    command.add(ffprobeExecutablePath);
                     if (chk_show_preview.isSelected()) {
                         command.add("--preview");
                     }
                     ProcessBuilder pb = new ProcessBuilder(command);
                     processHolder[0] = pb.start();
-                    try (BufferedReader reader = new BufferedReader(new InputStreamReader(processHolder[0].getInputStream()))) {
+
+                    final List<String> recognizedNamesForVideo = new ArrayList<>();
+
+                    try (
+                            BufferedReader reader = new BufferedReader(new InputStreamReader(processHolder[0].getInputStream()));
+                            BufferedReader errorReader = new BufferedReader(new InputStreamReader(processHolder[0].getErrorStream()))
+                    ) {
                         String line;
                         while ((line = reader.readLine()) != null) {
                             if (line.startsWith("PROGRESS:")) {
                                 setProgress(Integer.parseInt(line.substring(9)));
+                            } else if (line.startsWith("RESULTS:")) {
+                                String jsonOutput = line.substring(8);
+                                JSONArray jsonArray = new JSONArray(jsonOutput);
+                                for (int j = 0; j < jsonArray.length(); j++) {
+                                    recognizedNamesForVideo.add(jsonArray.getString(j));
+                                }
                             } else {
-                                System.out.println("Python: " + line);
+                                System.out.println("Python stdout: " + line);
                             }
                         }
-                    }
-                    if (processHolder[0].waitFor() == 0) {
-                        Path resultsPath = Paths.get(video.getAbsolutePath().substring(0, video.getAbsolutePath().lastIndexOf('.')) + ".txt");
-                        if (Files.exists(resultsPath)) {
-                            results.put(video, Files.readAllLines(resultsPath));
-                            Files.delete(resultsPath);
+
+                        int exitCode = processHolder[0].waitFor();
+                        if (exitCode != 0) {
+                            final String errorOutput = errorReader.lines().collect(Collectors.joining("\n"));
+                            final String errorMessage = "The face recognition failed for file '" + videoName + "' (exit code " + exitCode + ").\n\nError:\n" + errorOutput;
+
+                            SwingUtilities.invokeLater(() ->
+                                    JOptionPane.showMessageDialog(frame, errorMessage, "Face Recognition Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon))
+                            );
+                            throw new IOException(errorMessage);
                         } else {
-                            results.put(video, new ArrayList<>());
+                            results.put(video, recognizedNamesForVideo);
                         }
                     }
                 }
@@ -334,6 +488,7 @@ public class MainInterface {
                 progressDialog.dispose();
             }
         };
+
         cancelButton.addActionListener(e -> {
             Process p = processHolder[0];
             if (p != null) {
@@ -341,6 +496,7 @@ public class MainInterface {
             }
             worker.cancel(true);
         });
+
         worker.addPropertyChangeListener(evt -> {
             if ("progress".equals(evt.getPropertyName())) {
                 int frameProgress = (Integer) evt.getNewValue();
@@ -352,13 +508,17 @@ public class MainInterface {
                 overallLabel.setText("Overall Progress: " + (currentVideoIndex[0] + 1) + " / " + videos.size());
             }
         });
+
         worker.execute();
         progressDialog.setVisible(true);
+
         try {
             return worker.get();
         } catch (CancellationException e) {
+            System.out.println("Face recognition was canceled by the user.");
             return null;
         } catch (InterruptedException | ExecutionException e) {
+            System.err.println("An error occurred during face recognition execution.");
             e.printStackTrace();
             return null;
         }
@@ -366,6 +526,9 @@ public class MainInterface {
 
     private List<String> showTagReviewDialog(File video, List<String> initialNames) {
         JDialog dialog = new JDialog(frame, "Review Tags for " + video.getName(), true);
+        if (this.appIcon != null) {
+            dialog.setIconImage(this.appIcon);
+        }
         dialog.setLayout(new BorderLayout(10, 10));
         DefaultListModel<String> listModel = new DefaultListModel<>();
         initialNames.forEach(listModel::addElement);
@@ -414,6 +577,9 @@ public class MainInterface {
 
     private void runFinalEmbeddingProcess(Map<File, List<String>> allFileTags) {
         JDialog progressDialog = new JDialog(frame, "Embedding Metadata...", true);
+        if (this.appIcon != null) {
+            progressDialog.setIconImage(this.appIcon);
+        }
         JProgressBar progressBar = new JProgressBar(0, allFileTags.size());
         JLabel progressLabel = new JLabel("Embedding file 0 of " + allFileTags.size());
         JPanel panel = new JPanel(new BorderLayout(5, 5));
@@ -460,10 +626,11 @@ public class MainInterface {
                     copyFilesToServer();
                 } else {
                     Object[] options = {"Show me where", "Close"};
-                    int choice = JOptionPane.showOptionDialog(frame, "The files have been tagged. You may now copy them into the appropriate X Grid Folder", "Success", JOptionPane.DEFAULT_OPTION, JOptionPane.INFORMATION_MESSAGE, null, options, options[1]);
+                    int choice = JOptionPane.showOptionDialog(frame, "The files have been tagged. You may now copy them into the appropriate X Grid Folder", "Success", JOptionPane.DEFAULT_OPTION, JOptionPane.INFORMATION_MESSAGE, new ImageIcon(appIcon), options, options[1]);
                     if (choice == 0) {
                         openHelpLink();
                     }
+                    btn_clear.doClick();
                 }
             }
         };
@@ -474,15 +641,20 @@ public class MainInterface {
     private void copyFilesToServer() {
         Path runMediaPath = Paths.get("/Volumes/RunMedia/");
         if (!Files.exists(runMediaPath)) {
+            int response = JOptionPane.showConfirmDialog(frame, "RunMedia is not connected.\nWould you like to attempt to connect?", "Server Not Found", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE, new ImageIcon(appIcon));
+            if (response == JOptionPane.YES_OPTION) {
                 try {
                     Process p = new ProcessBuilder("bash", resourceDir.resolve("mount_server.sh").toString()).start();
                     p.waitFor();
                 } catch (IOException | InterruptedException e) {
                     e.printStackTrace();
                 }
+            } else {
+                return;
+            }
         }
         if (!Files.exists(runMediaPath)) {
-            JOptionPane.showMessageDialog(frame, "Could not copy files. The server could not be connected.", "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(frame, "Could not copy files. The Run Media is not mounted.", "Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
             return;
         }
         Path destinationPath;
@@ -490,9 +662,9 @@ public class MainInterface {
         if (rdo_finished.isSelected()) {
             destinationPath = Paths.get("/Volumes/RunMedia/XGridLibrary/" + year + "/");
         } else {
-            String projectName = JOptionPane.showInputDialog(frame, "Enter the Project Name for the B-Roll folder:", "B-Roll Project Name", JOptionPane.PLAIN_MESSAGE);
+            String projectName = JOptionPane.showInputDialog(frame, "Enter the Project Name for the B-Roll folder:", "Project Name", JOptionPane.PLAIN_MESSAGE);
             if (projectName == null || projectName.trim().isEmpty()) {
-                JOptionPane.showMessageDialog(frame, "Copy canceled: Project name cannot be empty.", "Canceled", JOptionPane.WARNING_MESSAGE);
+                JOptionPane.showMessageDialog(frame, "Copy canceled: Project name cannot be empty.", "Canceled", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
                 return;
             }
             int month = monthCodeToNumber((String) combo_month.getSelectedItem());
@@ -502,10 +674,13 @@ public class MainInterface {
         try {
             Files.createDirectories(destinationPath);
         } catch (IOException e) {
-            JOptionPane.showMessageDialog(frame, "Could not create destination directory:\n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(frame, "Could not create destination folder:\n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
             return;
         }
         JDialog copyProgressDialog = new JDialog(frame, "Copying Files...", true);
+        if (this.appIcon != null) {
+            copyProgressDialog.setIconImage(this.appIcon);
+        }
         JProgressBar copyProgressBar = new JProgressBar(0, 100);
         JLabel copyLabel = new JLabel("Starting copy...");
         JPanel panel = new JPanel(new BorderLayout(5, 5));
@@ -546,7 +721,8 @@ public class MainInterface {
             @Override
             protected void done() {
                 copyProgressDialog.dispose();
-                JOptionPane.showMessageDialog(frame, "File copy complete!", "Success", JOptionPane.INFORMATION_MESSAGE);
+                JOptionPane.showMessageDialog(frame, "Tagging complete!", "Success", JOptionPane.INFORMATION_MESSAGE, new ImageIcon(appIcon));
+                btn_clear.doClick();
             }
         };
         copyWorker.execute();
@@ -572,7 +748,7 @@ public class MainInterface {
     }
 
     private void updateTagsLabel() {
-        lbl_tags.setText("<html><div style='width:350px;'>Tags: " + String.join(", ", tags) + "</div></html>");
+        lbl_tags.setText("<html><div style='width:300px; height:`100px;'>Tags: " + String.join(", ", tags) + "</div></html>");
     }
 
     private void searchLocationAction(java.awt.event.ActionEvent e) {
@@ -666,7 +842,7 @@ public class MainInterface {
         File tempFile = new File(file.getParent(), "temp_" + file.getName());
         String tempFilePath = tempFile.getAbsolutePath();
         ArrayList<String> command = new ArrayList<>();
-        command.add(ffmpegCommand);
+        command.add(ffmpegExecutablePath);
         command.add("-i");
         command.add(inputFilePath);
         command.add("-c");
