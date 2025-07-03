@@ -2,7 +2,10 @@ package org.example;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.FocusEvent;
+import java.awt.event.FocusListener;
 import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -25,9 +28,12 @@ import java.util.Calendar;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Properties; // +++ ADDED +++
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
+
+//import ai.djl.repository.Version;
 import org.apache.commons.imaging.Imaging;
 import org.apache.commons.imaging.formats.jpeg.exif.ExifRewriter;
 import org.apache.commons.imaging.formats.jpeg.JpegImageMetadata;
@@ -39,6 +45,10 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class MainInterface {
+
+    //Version Number
+    private static final String VERSION = loadVersion(); // --- MODIFIED ---
+
     // UI Components
     private JScrollPane lst_files;
     private JButton btn_clear;
@@ -66,6 +76,7 @@ public class MainInterface {
     private JRadioButton rdo_broll;
     private JCheckBox chk_lega_approved;
     private JCheckBox chk_safety;
+    private JButton btn_version;
     private final JFrame frame;
 
     // Class members
@@ -85,6 +96,21 @@ public class MainInterface {
     public static void main(String[] args) {
         System.setProperty("apple.awt.application.name", "Media Tagger");
         new MainInterface();
+    }
+
+    private static String loadVersion() {
+        Properties props = new Properties();
+        try (InputStream is = MainInterface.class.getClassLoader().getResourceAsStream("application.properties")) {
+            if (is != null) {
+                props.load(is);
+                String version = props.getProperty("app.version", "unknown");
+                String versionLink  = props.getProperty("version.link", "unknown");
+                return version+","+versionLink; // Default to "unknown" if not found
+            }
+        } catch (IOException e) {
+            System.err.println("Could not load version from application.properties: " + e.getMessage());
+        }
+        return "unknown"; // Return default value on error
     }
 
     // --- NEW: Create a helper method to load the icon ---
@@ -236,6 +262,24 @@ public class MainInterface {
     }
 
     private void setupGUI() {
+
+        //Version display
+        String[] version = VERSION.split(",");
+        btn_version.setText("<html><div style='opacity:0.5;'>Version: " + version[0] + "</div></html>");
+        btn_version.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                    try {
+                        Desktop.getDesktop().browse(new URI(version[1]));
+                    } catch (IOException | URISyntaxException ex) {
+                        ex.printStackTrace();
+                    }
+                }
+            }
+        });
+
+
         // Set a custom cell renderer to display only the file name
         lst_file_contents.setCellRenderer(new DefaultListCellRenderer() {
             @Override
@@ -355,10 +399,10 @@ public class MainInterface {
             return;
         }
         if (chk_lega_approved.isSelected()) {
-            tags.add("Reviewed by Legal");
+            tags.add("✅ Reviewed by Legal");
         }
         if(chk_safety.isSelected()){
-            tags.add("Reviewed by Safety");
+            tags.add("✅ Reviewed by Safety");
         }
         List<File> videosToProcess = selectedFiles.stream()
                 .filter(f -> f.getName().toLowerCase().endsWith(".mp4"))
@@ -826,7 +870,7 @@ public class MainInterface {
         exifSubIFD.removeField(ExifTagConstants.EXIF_TAG_DATE_TIME_ORIGINAL);
         exifSubIFD.add(ExifTagConstants.EXIF_TAG_DATE_TIME_ORIGINAL, date);
         if (location != null)
-            outputSet.setGPSInDegrees(Double.parseDouble(location.lon), Double.parseDouble(location.lat));
+            outputSet.setGpsInDegrees(Double.parseDouble(location.lon), Double.parseDouble(location.lat));
         File tempFile = new File(file.getParent(), "temp_" + file.getName());
         try (OutputStream os = new BufferedOutputStream(new FileOutputStream(tempFile))) {
             new ExifRewriter().updateExifMetadataLossless(file, os, outputSet);
