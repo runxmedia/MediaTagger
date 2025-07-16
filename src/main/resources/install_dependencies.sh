@@ -68,6 +68,9 @@ run_setup() {
   echo "Installing Python face recognition libraries using $PYTHON_CMD..."
   "$PYTHON_CMD" -m pip install --upgrade pip
   "$PYTHON_CMD" -m pip install --break-system-packages --user numpy insightface faiss-cpu opencv-python tqdm onnxruntime
+  # WhisperX from GitHub with custom dependencies for newer Python versions
+  "$PYTHON_CMD" -m pip install --break-system-packages --user --no-deps git+https://github.com/m-bain/whisperX.git
+  "$PYTHON_CMD" -m pip install --break-system-packages --user ctranslate2==4.6.0 faster-whisper nltk
 
   # --- Step 5: Finalize ---
   # Check the exit code of the last command (pip install)

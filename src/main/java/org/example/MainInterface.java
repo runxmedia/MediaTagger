@@ -29,6 +29,9 @@ import java.util.Map;
 import java.util.Properties; // +++ ADDED +++
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
 //import ai.djl.repository.Version;
@@ -82,6 +85,7 @@ public class MainInterface {
     private JFileChooser file_chooser;
     private ArrayList<File> selectedFiles;
     private ArrayList<String> tags;
+    private Map<File, String> transcripts;
     private Location selectedLocation;
     private Path resourceDir;
     private String pythonExecutablePath;
@@ -134,6 +138,7 @@ public class MainInterface {
         file_chooser = new JFileChooser();
         selectedFiles = new ArrayList<>();
         tags = new ArrayList<>();
+        transcripts = new HashMap<>();
 
         // Setup resources, including the script to be run
         try {
@@ -411,6 +416,9 @@ public class MainInterface {
             System.out.println("Face recognition was canceled or failed.");
             return;
         }
+        if (chk_text_to_speech.isSelected()) {
+            transcripts.forEach((file, res) -> System.out.println("Transcript created for " + file.getName()));
+        }
         Map<File, List<String>> confirmedTags = new LinkedHashMap<>();
         for (File file : selectedFiles) {
             List<String> peopleTags = recognizedTags.getOrDefault(file, new ArrayList<>());
@@ -423,7 +431,7 @@ public class MainInterface {
     }
 
     private Map<File, List<String>> runAllFaceRecognition(List<File> videos) {
-        final JDialog progressDialog = new JDialog(frame, "Recognizing Faces...", true);
+        final JDialog progressDialog = new JDialog(frame, "Processing Videos...", true);
         if (this.appIcon != null) {
             progressDialog.setIconImage(this.appIcon);
         }
@@ -432,12 +440,16 @@ public class MainInterface {
         final JLabel statusLabel = new JLabel("Starting...");
         final JProgressBar frameProgressBar = new JProgressBar(0, 100);
         final JLabel frameLabel = new JLabel("Video Progress: 0%");
+        final JProgressBar speechProgressBar = new JProgressBar(0, 100);
+        final JLabel speechLabel = new JLabel("Speech Progress: 0%");
         final JButton cancelButton = new JButton("Cancel");
         statusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         frameProgressBar.setAlignmentX(Component.CENTER_ALIGNMENT);
         frameLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         overallProgressBar.setAlignmentX(Component.CENTER_ALIGNMENT);
         overallLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        speechProgressBar.setAlignmentX(Component.CENTER_ALIGNMENT);
+        speechLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         JPanel panel = new JPanel(new BorderLayout(5, 5));
         panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         JPanel progressPanel = new JPanel();
@@ -446,13 +458,19 @@ public class MainInterface {
         progressPanel.add(Box.createVerticalStrut(5));
         progressPanel.add(frameProgressBar);
         progressPanel.add(frameLabel);
+        if (chk_text_to_speech.isSelected()) {
+            progressPanel.add(Box.createVerticalStrut(5));
+            progressPanel.add(speechProgressBar);
+            progressPanel.add(speechLabel);
+        }
         progressPanel.add(Box.createVerticalStrut(10));
         progressPanel.add(overallProgressBar);
         progressPanel.add(overallLabel);
         panel.add(progressPanel, BorderLayout.CENTER);
         panel.add(cancelButton, BorderLayout.SOUTH);
         progressDialog.setContentPane(panel);
-        progressDialog.setSize(400, 200);
+        int dlgHeight = chk_text_to_speech.isSelected() ? 250 : 200;
+        progressDialog.setSize(400, dlgHeight);
         progressDialog.setLocationRelativeTo(frame);
         final Process[] processHolder = new Process[1];
         final int[] currentVideoIndex = {0};
@@ -464,6 +482,7 @@ public class MainInterface {
                 Path scriptPath = resourceDir.resolve("video_tagger_CLI.py");
                 Path indexPath = resourceDir.resolve("known_faces.index");
                 Path namesPath = resourceDir.resolve("names.json");
+                Path speechScriptPath = resourceDir.resolve("detect_speech.py");
 
                 for (int i = 0; i < videos.size(); i++) {
                     if (isCancelled()) break;
@@ -488,39 +507,99 @@ public class MainInterface {
                     ProcessBuilder pb = new ProcessBuilder(command);
                     processHolder[0] = pb.start();
 
+                    Process speechProcess = null;
+                    if (chk_text_to_speech.isSelected()) {
+                        ArrayList<String> speechCmd = new ArrayList<>();
+                        speechCmd.add(pythonExecutablePath);
+                        speechCmd.add(speechScriptPath.toString());
+                        speechCmd.add(video.getAbsolutePath());
+                        ProcessBuilder speechPb = new ProcessBuilder(speechCmd);
+                        speechProcess = speechPb.start();
+                    }
+
                     final List<String> recognizedNamesForVideo = new ArrayList<>();
 
                     try (
                             BufferedReader reader = new BufferedReader(new InputStreamReader(processHolder[0].getInputStream()));
-                            BufferedReader errorReader = new BufferedReader(new InputStreamReader(processHolder[0].getErrorStream()))
+                            BufferedReader errorReader = new BufferedReader(new InputStreamReader(processHolder[0].getErrorStream()));
+                            BufferedReader speechReader = speechProcess != null ? new BufferedReader(new InputStreamReader(speechProcess.getInputStream())) : null;
+                            BufferedReader speechError = speechProcess != null ? new BufferedReader(new InputStreamReader(speechProcess.getErrorStream())) : null
                     ) {
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            if (line.startsWith("PROGRESS:")) {
-                                setProgress(Integer.parseInt(line.substring(9)));
-                            } else if (line.startsWith("RESULTS:")) {
-                                String jsonOutput = line.substring(8);
-                                JSONArray jsonArray = new JSONArray(jsonOutput);
-                                for (int j = 0; j < jsonArray.length(); j++) {
-                                    recognizedNamesForVideo.add(jsonArray.getString(j));
+                        ExecutorService exec = Executors.newFixedThreadPool(speechProcess != null ? 2 : 1);
+
+                        Future<?> faceFuture = exec.submit(() -> {
+                            try {
+                                String line;
+                                while ((line = reader.readLine()) != null) {
+                                    if (line.startsWith("PROGRESS:")) {
+                                        setProgress(Integer.parseInt(line.substring(9)));
+                                    } else if (line.startsWith("RESULTS:")) {
+                                        String jsonOutput = line.substring(8);
+                                        JSONArray jsonArray = new JSONArray(jsonOutput);
+                                        for (int j = 0; j < jsonArray.length(); j++) {
+                                            recognizedNamesForVideo.add(jsonArray.getString(j));
+                                        }
+                                    } else {
+                                        System.out.println("Python stdout: " + line);
+                                    }
                                 }
-                            } else {
-                                System.out.println("Python stdout: " + line);
-                            }
+                            } catch (IOException ignored) {}
+                        });
+
+                        final StringBuilder speechResult = new StringBuilder();
+                        Future<?> speechFuture = null;
+                        if (speechProcess != null) {
+                            speechFuture = exec.submit(() -> {
+                                try {
+                                    String line;
+                                    while ((line = speechReader.readLine()) != null) {
+                                        if (line.startsWith("PROGRESS:")) {
+                                            int val = Integer.parseInt(line.substring(9));
+                                            SwingUtilities.invokeLater(() -> {
+                                                speechProgressBar.setValue(val);
+                                                speechLabel.setText("Speech Progress: " + val + "%");
+                                            });
+                                        } else if (line.startsWith("RESULTS:")) {
+                                            speechResult.append(line.substring(8));
+                                        } else {
+                                            System.out.println("Speech stdout: " + line);
+                                        }
+                                    }
+                                } catch (IOException ignored) {}
+                            });
                         }
 
+                        faceFuture.get();
+                        if (speechFuture != null) speechFuture.get();
+
                         int exitCode = processHolder[0].waitFor();
+                        int speechCode = 0;
+                        if (speechProcess != null) speechCode = speechProcess.waitFor();
+
+                        exec.shutdown();
+
                         if (exitCode != 0) {
                             final String errorOutput = errorReader.lines().collect(Collectors.joining("\n"));
                             final String errorMessage = "The face recognition failed for file '" + videoName + "' (exit code " + exitCode + ").\n\nError:\n" + errorOutput;
-
                             SwingUtilities.invokeLater(() ->
                                     JOptionPane.showMessageDialog(frame, errorMessage, "Face Recognition Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon))
                             );
                             throw new IOException(errorMessage);
-                        } else {
-                            results.put(video, recognizedNamesForVideo);
                         }
+
+                        if (speechProcess != null && speechCode != 0) {
+                            final String errorOutput = speechError.lines().collect(Collectors.joining("\n"));
+                            final String errorMessage = "The speech detection failed for file '" + videoName + "' (exit code " + speechCode + ").\n\nError:\n" + errorOutput;
+                            SwingUtilities.invokeLater(() ->
+                                    JOptionPane.showMessageDialog(frame, errorMessage, "Speech Detection Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon))
+                            );
+                        }
+
+                        if (speechProcess != null && speechResult.length() > 0) {
+                            transcripts.put(video, speechResult.toString());
+                        }
+
+                        results.put(video, recognizedNamesForVideo);
                     }
                 }
                 return results;
