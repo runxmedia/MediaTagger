@@ -6,6 +6,11 @@
 LOG_DIR="$HOME/Desktop"
 LOG_FILE="$LOG_DIR/install_dependencies.log"
 
+# Replace the placeholder below with your Hugging Face access token if
+# authenticated model downloads are required. The token is used when
+# retrieving the diarization model.
+HF_TOKEN="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"
+
 # Create a secure temporary file to capture all output.
 # Exit if the temporary file cannot be created.
 TMP_LOG=$(mktemp) || { echo "FATAL: Could not create temp file."; exit 1; }
@@ -90,7 +95,22 @@ run_setup() {
   # Install diarization dependencies for whisperx
   "$PYTHON_CMD" -m pip install --break-system-packages --user pyannote.audio
 
-  # --- Step 5: Finalize ---
+  # --- Step 5: Download Diarization Model ---
+  echo "Downloading pyannote/speaker-diarization-3.1 model..."
+  "$PYTHON_CMD" - <<PY
+from huggingface_hub import snapshot_download
+import sys
+
+token = "${HF_TOKEN}"
+try:
+    snapshot_download("pyannote/speaker-diarization-3.1", use_auth_token=token, resume_download=True)
+    print("Model download complete.")
+except Exception as e:
+    print(f"Failed to download model: {e}", file=sys.stderr)
+    sys.exit(1)
+PY
+
+  # --- Step 6: Finalize ---
   # Check the exit code of the last command (pip install)
   if [ $? -eq 0 ]; then
       echo "--------------------------------------------------"
@@ -117,7 +137,8 @@ SCRIPT_STATUS=$? # Capture the success (0) or failure (1) code from the function
 if [ $SCRIPT_STATUS -eq 0 ]; then
     echo "✅ Setup completed successfully."
     # Cleanup the temporary log on success.
-    rm "$TMP_LOG"
+#    rm "$TMP_LOG"
+    mv "$TMP_LOG" "$LOG_FILE"
 else
     # Ensure the Desktop directory exists before moving the log file
     mkdir -p "$LOG_DIR"

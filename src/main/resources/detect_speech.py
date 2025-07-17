@@ -13,7 +13,7 @@ except Exception:  # Fallback for very old versions
 # downloading the diarization model when required.  Some pyannote models
 # require authentication, and failing to provide a token may lead to the
 # pipeline failing to load with an AttributeError.
-HF_TOKEN = os.environ.get("HF_TOKEN")
+HF_TOKEN = "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"
 
 
 def transcribe_video(path):
