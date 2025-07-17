@@ -252,7 +252,7 @@ public class MainInterface {
         if (!Files.exists(resourceDir)) {
             Files.createDirectories(resourceDir);
         }
-        String[] resourceFiles = {"video_tagger_CLI.py", "known_faces.index", "names.json", "install_dependencies.sh", "mount_server.sh"};
+        String[] resourceFiles = {"video_tagger_CLI.py", "known_faces.index", "names.json", "install_dependencies.sh", "mount_server.sh", "detect_speech.py"};
         for (String fileName : resourceFiles) {
             Path scriptPath = resourceDir.resolve(fileName);
             try (InputStream in = getClass().getClassLoader().getResourceAsStream(fileName)) {
