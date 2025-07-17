@@ -26,7 +26,7 @@ import java.util.Calendar;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Properties; // +++ ADDED +++
+import java.util.Properties;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -34,7 +34,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
-//import ai.djl.repository.Version;
 import org.apache.commons.imaging.Imaging;
 import org.apache.commons.imaging.formats.jpeg.exif.ExifRewriter;
 import org.apache.commons.imaging.formats.jpeg.JpegImageMetadata;
@@ -48,7 +47,7 @@ import org.json.JSONObject;
 public class MainInterface {
 
     //Version Number
-    private static final String VERSION = loadVersion(); // --- MODIFIED ---
+    private static final String VERSION = loadVersion();
 
     // UI Components
     private JScrollPane lst_files;
@@ -91,9 +90,8 @@ public class MainInterface {
     private String pythonExecutablePath;
     private String ffmpegExecutablePath;
     private String ffprobeExecutablePath;
+    private String hfToken; // --- ADDED: To hold the Hugging Face token
     private static final String[] VIDEO_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".mp4"};
-
-    // --- NEW: Add a member variable for the loaded icon ---
     private Image appIcon;
 
     public static void main(String[] args) {
@@ -108,15 +106,14 @@ public class MainInterface {
                 props.load(is);
                 String version = props.getProperty("app.version", "unknown");
                 String versionLink  = props.getProperty("version.link", "unknown");
-                return version+","+versionLink; // Default to "unknown" if not found
+                return version+","+versionLink;
             }
         } catch (IOException e) {
             System.err.println("Could not load version from application.properties: " + e.getMessage());
         }
-        return "unknown"; // Return default value on error
+        return "unknown";
     }
 
-    // --- NEW: Create a helper method to load the icon ---
     private Image loadAppIcon() {
         URL iconURL = getClass().getClassLoader().getResource("app_icon.png");
         if (iconURL != null) {
@@ -134,13 +131,11 @@ public class MainInterface {
             frame.setIconImage(this.appIcon);
         }
 
-        // Initialize non-GUI components first
         file_chooser = new JFileChooser();
         selectedFiles = new ArrayList<>();
         tags = new ArrayList<>();
         transcripts = new HashMap<>();
 
-        // Setup resources, including the script to be run
         try {
             setupResources();
         } catch (Exception e) {
@@ -148,10 +143,10 @@ public class MainInterface {
             System.exit(1);
         }
 
-        // Run the startup script
+        // --- MODIFIED: Load token before running scripts that need it ---
+        loadHfToken();
         runStartupScript();
 
-        // Now, verify dependencies are present
         pythonExecutablePath = findCompatiblePython();
         ffmpegExecutablePath = findExecutable("ffmpeg");
         ffprobeExecutablePath = findExecutable("ffprobe");
@@ -168,7 +163,6 @@ public class MainInterface {
             System.exit(1);
         }
 
-        // All checks passed, setup the GUI and show the window
         setupGUI();
         frame.setContentPane(pnl_main_interface);
         frame.setTitle("Media Tagger");
@@ -176,6 +170,30 @@ public class MainInterface {
         frame.setLocationRelativeTo(null);
         frame.setSize(800, 800);
         frame.setVisible(true);
+    }
+
+    // --- ADDED: Method to load the Hugging Face token from the resource file ---
+    private void loadHfToken() {
+        Path tokenPath = resourceDir.resolve("HF_KEY.txt");
+        try {
+            this.hfToken = Files.readString(tokenPath).trim();
+            if (this.hfToken.isEmpty() || this.hfToken.equals("REPLACE_WITH_YOUR_HUGGING_FACE_TOKEN")) {
+                JOptionPane.showMessageDialog(frame,
+                        "Hugging Face token is missing or is a placeholder.\n" +
+                                "Please edit the file at ~/.mediatagger/HF_KEY.txt to include your valid token.",
+                        "Token Not Configured",
+                        JOptionPane.ERROR_MESSAGE,
+                        new ImageIcon(appIcon));
+                System.exit(1);
+            }
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(frame,
+                    "Could not read Hugging Face token file at:\n" + tokenPath + "\n\nError: " + e.getMessage(),
+                    "Token File Error",
+                    JOptionPane.ERROR_MESSAGE,
+                    new ImageIcon(appIcon));
+            System.exit(1);
+        }
     }
 
     private void runStartupScript() {
@@ -197,7 +215,8 @@ public class MainInterface {
             @Override
             protected Integer doInBackground() throws Exception {
                 Path scriptPath = resourceDir.resolve("install_dependencies.sh");
-                ProcessBuilder pb = new ProcessBuilder("bash", scriptPath.toString());
+                // --- MODIFIED: Pass the loaded token as a command-line argument ---
+                ProcessBuilder pb = new ProcessBuilder("bash", scriptPath.toString(), hfToken);
                 Process process = pb.start();
 
                 try (BufferedReader errorReader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
@@ -232,7 +251,7 @@ public class MainInterface {
         };
 
         worker.execute();
-        waitDialog.setVisible(true); // This blocks until the dialog is disposed.
+        waitDialog.setVisible(true);
     }
 
     private String findExecutable(String name) {
@@ -280,7 +299,8 @@ public class MainInterface {
         if (!Files.exists(resourceDir)) {
             Files.createDirectories(resourceDir);
         }
-        String[] resourceFiles = {"video_tagger_CLI.py", "known_faces.index", "names.json", "install_dependencies.sh", "mount_server.sh", "detect_speech.py"};
+        // --- MODIFIED: Add HF_KEY.txt to the list of resources to copy ---
+        String[] resourceFiles = {"video_tagger_CLI.py", "known_faces.index", "names.json", "install_dependencies.sh", "mount_server.sh", "detect_speech.py", "HF_KEY.txt"};
         for (String fileName : resourceFiles) {
             Path scriptPath = resourceDir.resolve(fileName);
             try (InputStream in = getClass().getClassLoader().getResourceAsStream(fileName)) {
@@ -294,8 +314,6 @@ public class MainInterface {
     }
 
     private void setupGUI() {
-
-        //Version display
         String[] version = VERSION.split(",");
         btn_version.setText("<html><div style='opacity:0.5;'>Version: " + version[0] + "</div></html>");
         btn_version.addActionListener(new ActionListener() {
@@ -311,8 +329,6 @@ public class MainInterface {
             }
         });
 
-
-        // Set a custom cell renderer to display only the file name
         lst_file_contents.setCellRenderer(new DefaultListCellRenderer() {
             @Override
             public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
@@ -541,6 +557,8 @@ public class MainInterface {
                         speechCmd.add(pythonExecutablePath);
                         speechCmd.add(speechScriptPath.toString());
                         speechCmd.add(video.getAbsolutePath());
+                        // --- MODIFIED: Pass the loaded token as a command-line argument ---
+                        speechCmd.add(hfToken);
                         ProcessBuilder speechPb = new ProcessBuilder(speechCmd);
                         speechProcess = speechPb.start();
                     }

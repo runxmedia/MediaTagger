@@ -6,11 +6,6 @@
 LOG_DIR="$HOME/Desktop"
 LOG_FILE="$LOG_DIR/install_dependencies.log"
 
-# Replace the placeholder below with your Hugging Face access token if
-# authenticated model downloads are required. The token is used when
-# retrieving the diarization model.
-HF_TOKEN="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"
-
 # Create a secure temporary file to capture all output.
 # Exit if the temporary file cannot be created.
 TMP_LOG=$(mktemp) || { echo "FATAL: Could not create temp file."; exit 1; }
@@ -19,6 +14,13 @@ TMP_LOG=$(mktemp) || { echo "FATAL: Could not create temp file."; exit 1; }
 # All installation logic is moved into this function.
 # It returns 0 on success and 1 on any failure.
 run_setup() {
+  # --- MODIFIED: Validate Hugging Face Token from command-line argument ---
+  HF_TOKEN=$1
+  if [ -z "$HF_TOKEN" ]; then
+      echo "Error: Hugging Face token was not provided as an argument to the installation script."
+      return 1
+  fi
+
   # Function to find a command in a specific list of directories.
   find_command() {
     local cmd_name=$1
@@ -101,6 +103,7 @@ run_setup() {
 from huggingface_hub import snapshot_download
 import sys
 
+# The token is passed in from the shell script variable
 token = "${HF_TOKEN}"
 try:
     snapshot_download("pyannote/speaker-diarization-3.1", use_auth_token=token, resume_download=True)
@@ -129,7 +132,8 @@ PY
 echo "Starting environment setup... This may take a moment."
 
 # Execute the setup function, redirecting all its output to the temporary log file.
-run_setup > "$TMP_LOG" 2>&1
+# --- MODIFIED: Pass the shell script's first argument ($1) to the function ---
+run_setup "$1" > "$TMP_LOG" 2>&1
 SCRIPT_STATUS=$? # Capture the success (0) or failure (1) code from the function.
 
 # --- Final User Feedback ---
@@ -137,8 +141,7 @@ SCRIPT_STATUS=$? # Capture the success (0) or failure (1) code from the function
 if [ $SCRIPT_STATUS -eq 0 ]; then
     echo "✅ Setup completed successfully."
     # Cleanup the temporary log on success.
-#    rm "$TMP_LOG"
-    mv "$TMP_LOG" "$LOG_FILE"
+    rm "$TMP_LOG"
 else
     # Ensure the Desktop directory exists before moving the log file
     mkdir -p "$LOG_DIR"

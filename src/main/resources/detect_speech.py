@@ -9,14 +9,8 @@ try:
 except Exception:  # Fallback for very old versions
     DiarizationPipeline = getattr(whisperx, "DiarizationPipeline", None)
 
-# Attempt to read a Hugging Face token from the environment to allow
-# downloading the diarization model when required.  Some pyannote models
-# require authentication, and failing to provide a token may lead to the
-# pipeline failing to load with an AttributeError.
-HF_TOKEN = "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"
-
-
-def transcribe_video(path):
+# --- MODIFIED: This function now accepts the hf_token as an argument ---
+def transcribe_video(path, hf_token):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = whisperx.load_model("large-v2", device, compute_type="float16" if device == "cuda" else "int8")
     audio = whisperx.load_audio(path)
@@ -30,33 +24,30 @@ def transcribe_video(path):
     if DiarizationPipeline is None:
         raise AttributeError("Installed whisperx does not provide DiarizationPipeline")
 
-    # Pass the HF token to the pipeline if available.  If HF_TOKEN is not set,
-    # WhisperX will attempt an anonymous download which may fail for protected
-    # models, so we warn the user to set the token for reliability.
+    # --- MODIFIED: Use the passed hf_token for authentication ---
     try:
-        diarize_model = DiarizationPipeline(use_auth_token=HF_TOKEN or False, device=device)
+        diarize_model = DiarizationPipeline(use_auth_token=hf_token, device=device)
     except Exception as e:
         raise RuntimeError(
-            "Failed to initialize the diarization model. Ensure pyannote.audio is installed and HF_TOKEN is set if required."
+            "Failed to initialize the diarization model. Ensure pyannote.audio is installed and a valid HF_TOKEN was provided."
         ) from e
-
-    if HF_TOKEN is None:
-        print("WARNING: HF_TOKEN not set. Diarization model download may fail.", file=sys.stderr)
 
     diarize_segments = diarize_model(audio)
     result = whisperx.assign_word_speakers(diarize_segments, result)
     print("PROGRESS:90", flush=True)
     return result
 
-
+# --- MODIFIED: The main function now parses the token from command-line arguments ---
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python detect_speech.py <video_file>", file=sys.stderr)
+    if len(sys.argv) < 3:
+        print("Usage: python detect_speech.py <video_file> <hf_token>", file=sys.stderr)
         sys.exit(1)
 
     video = sys.argv[1]
+    token = sys.argv[2] # The token is the second argument
+
     print("PROGRESS:0", flush=True)
-    result = transcribe_video(video)
+    result = transcribe_video(video, token)
 
     txt_file = os.path.splitext(video)[0] + ".txt"
     with open(txt_file, "w", encoding="utf-8") as f:
