@@ -9,8 +9,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.*;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.dnd.DnDConstants;
 import java.awt.dnd.DropTarget;
@@ -22,11 +21,7 @@ import java.nio.file.attribute.FileTime;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.Calendar;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Properties;
+import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -455,14 +450,16 @@ public class MainInterface {
         List<File> videosToProcess = selectedFiles.stream()
                 .filter(f -> f.getName().toLowerCase().endsWith(".mp4"))
                 .collect(Collectors.toList());
-        Map<File, List<String>> recognizedTags = runAllFaceRecognition(videosToProcess);
-        if (recognizedTags == null) {
+        Map<File, FaceData> faceDataMap = runAllFaceRecognition(videosToProcess);
+        Map<File, List<String>> recognizedTags = new LinkedHashMap<>();
+        if (faceDataMap != null) {
+            faceDataMap.forEach((f, fd) -> recognizedTags.put(f, fd.names));
+        }
+        if (faceDataMap == null) {
             System.out.println("Face recognition was canceled or failed.");
             return;
         }
-        if (chk_text_to_speech.isSelected()) {
-            transcripts.forEach((file, res) -> System.out.println("Transcript created for " + file.getName()));
-        }
+
         Map<File, List<String>> confirmedTags = new LinkedHashMap<>();
         for (File file : selectedFiles) {
             List<String> peopleTags = recognizedTags.getOrDefault(file, new ArrayList<>());
@@ -470,11 +467,23 @@ public class MainInterface {
                 peopleTags = showTagReviewDialog(file, peopleTags);
             }
             confirmedTags.put(file, peopleTags);
+
+            if (chk_text_to_speech.isSelected() && transcripts.containsKey(file)) {
+                FaceData fd = faceDataMap.get(file);
+                String finalText = showTranscriptReviewDialog(file, transcripts.get(file), fd);
+                transcripts.put(file, finalText);
+                File txtFile = new File(file.getParent(), file.getName().replaceFirst("\\.[^.]+$", ".txt"));
+                try (BufferedWriter bw = Files.newBufferedWriter(txtFile.toPath())) {
+                    bw.write(finalText);
+                } catch (IOException ex) {
+                    ex.printStackTrace();
+                }
+            }
         }
         runFinalEmbeddingProcess(confirmedTags);
     }
 
-    private Map<File, List<String>> runAllFaceRecognition(List<File> videos) {
+    private Map<File, FaceData> runAllFaceRecognition(List<File> videos) {
         final JDialog progressDialog = new JDialog(frame, "Processing Videos...", true);
         if (this.appIcon != null) {
             progressDialog.setIconImage(this.appIcon);
@@ -519,10 +528,10 @@ public class MainInterface {
         final Process[] processHolder = new Process[1];
         final int[] currentVideoIndex = {0};
 
-        SwingWorker<Map<File, List<String>>, Void> worker = new SwingWorker<>() {
+        SwingWorker<Map<File, FaceData>, Void> worker = new SwingWorker<>() {
             @Override
-            protected Map<File, List<String>> doInBackground() throws Exception {
-                Map<File, List<String>> results = new HashMap<>();
+            protected Map<File, FaceData> doInBackground() throws Exception {
+                Map<File, FaceData> results = new HashMap<>();
                 Path scriptPath = resourceDir.resolve("video_tagger_CLI.py");
                 Path indexPath = resourceDir.resolve("known_faces.index");
                 Path namesPath = resourceDir.resolve("names.json");
@@ -564,6 +573,7 @@ public class MainInterface {
                     }
 
                     final List<String> recognizedNamesForVideo = new ArrayList<>();
+                    final List<Detection> detectionsForVideo = new ArrayList<>();
 
                     try (
                             BufferedReader reader = new BufferedReader(new InputStreamReader(processHolder[0].getInputStream()));
@@ -581,9 +591,15 @@ public class MainInterface {
                                         setProgress(Integer.parseInt(line.substring(9)));
                                     } else if (line.startsWith("RESULTS:")) {
                                         String jsonOutput = line.substring(8);
-                                        JSONArray jsonArray = new JSONArray(jsonOutput);
-                                        for (int j = 0; j < jsonArray.length(); j++) {
-                                            recognizedNamesForVideo.add(jsonArray.getString(j));
+                                        JSONObject obj = new JSONObject(jsonOutput);
+                                        JSONArray namesArr = obj.getJSONArray("names");
+                                        for (int j = 0; j < namesArr.length(); j++) {
+                                            recognizedNamesForVideo.add(namesArr.getString(j));
+                                        }
+                                        JSONArray detArr = obj.getJSONArray("detections");
+                                        for (int j = 0; j < detArr.length(); j++) {
+                                            JSONObject d = detArr.getJSONObject(j);
+                                            detectionsForVideo.add(new Detection(d.getDouble("time"), d.getString("name")));
                                         }
                                     } else {
                                         System.out.println("Python stdout: " + line);
@@ -645,7 +661,7 @@ public class MainInterface {
                             transcripts.put(video, speechResult.toString());
                         }
 
-                        results.put(video, recognizedNamesForVideo);
+                        results.put(video, new FaceData(recognizedNamesForVideo, detectionsForVideo));
                     }
                 }
                 return results;
@@ -741,6 +757,78 @@ public class MainInterface {
         dialog.setLocationRelativeTo(frame);
         dialog.setVisible(true);
         return confirmedNames;
+    }
+
+    private String showTranscriptReviewDialog(File video, String json, FaceData faceData) {
+        JSONObject obj = new JSONObject(json);
+        JSONArray segments = obj.getJSONArray("segments");
+
+        Map<String, String> speakerNames = new LinkedHashMap<>();
+        for (int i = 0; i < segments.length(); i++) {
+            JSONObject seg = segments.getJSONObject(i);
+            String spk = seg.getString("speaker");
+            double start = seg.getDouble("start");
+            double end = seg.getDouble("end");
+            if (!speakerNames.containsKey(spk)) {
+                Set<String> possible = new HashSet<>();
+                for (Detection d : faceData.detections) {
+                    if (d.time >= start && d.time <= end) {
+                        possible.add(d.name);
+                    }
+                }
+                if (possible.size() == 1) {
+                    speakerNames.put(spk, possible.iterator().next());
+                } else {
+                    speakerNames.put(spk, spk);
+                }
+            }
+        }
+
+        JDialog dialog = new JDialog(frame, "Review Transcript for " + video.getName(), true);
+        if (this.appIcon != null) dialog.setIconImage(this.appIcon);
+        dialog.setLayout(new BorderLayout(10,10));
+
+        JPanel namesPanel = new JPanel(new GridLayout(0,2,5,5));
+        Map<String, JTextField> fields = new LinkedHashMap<>();
+        for (Map.Entry<String,String> entry : speakerNames.entrySet()) {
+            namesPanel.add(new JLabel(entry.getKey() + ":"));
+            JTextField tf = new JTextField(entry.getValue());
+            fields.put(entry.getKey(), tf);
+            namesPanel.add(tf);
+        }
+
+        JTextArea transcriptArea = new JTextArea(20,60);
+        transcriptArea.setEditable(false);
+
+        Runnable updateArea = () -> {
+            StringBuilder sb = new StringBuilder();
+            for (int i=0;i<segments.length();i++) {
+                JSONObject seg = segments.getJSONObject(i);
+                String spk = seg.getString("speaker");
+                String name = fields.get(spk).getText();
+                double start = seg.getDouble("start");
+                double end = seg.getDouble("end");
+                String text = seg.getString("text").trim();
+                sb.append(String.format("[%.2f-%.2f] %s: %s%n", start,end,name,text));
+            }
+            transcriptArea.setText(sb.toString());
+        };
+
+        fields.values().forEach(f -> f.getDocument().addDocumentListener(new javax.swing.event.DocumentListener(){public void insertUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}public void removeUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}public void changedUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}}));
+
+        updateArea.run();
+
+        JButton confirm = new JButton("Save Transcript");
+        confirm.addActionListener(e -> dialog.dispose());
+
+        dialog.add(namesPanel, BorderLayout.NORTH);
+        dialog.add(new JScrollPane(transcriptArea), BorderLayout.CENTER);
+        dialog.add(confirm, BorderLayout.SOUTH);
+        dialog.pack();
+        dialog.setLocationRelativeTo(frame);
+        dialog.setVisible(true);
+
+        return transcriptArea.getText();
     }
 
     private void runFinalEmbeddingProcess(Map<File, List<String>> allFileTags) {
@@ -1051,6 +1139,26 @@ public class MainInterface {
         @Override
         public String toString() {
             return displayName;
+        }
+    }
+
+    private static class Detection {
+        double time;
+        String name;
+
+        Detection(double time, String name) {
+            this.time = time;
+            this.name = name;
+        }
+    }
+
+    private static class FaceData {
+        List<String> names;
+        List<Detection> detections;
+
+        FaceData(List<String> names, List<Detection> detections) {
+            this.names = names;
+            this.detections = detections;
         }
     }
 }

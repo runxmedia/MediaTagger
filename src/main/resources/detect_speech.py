@@ -49,14 +49,9 @@ def main():
     print("PROGRESS:0", flush=True)
     result = transcribe_video(video, token)
 
-    txt_file = os.path.splitext(video)[0] + ".txt"
-    with open(txt_file, "w", encoding="utf-8") as f:
-        for seg in result["segments"]:
-            speaker = seg.get("speaker", "SPEAKER_0")
-            start = seg.get("start", 0)
-            end = seg.get("end", 0)
-            text = seg.get("text", "").strip()
-            f.write(f"[{start:.2f}-{end:.2f}] {speaker}: {text}\n")
+    # The transcript will no longer be written to a file automatically.
+    # Instead, the calling application will display the results for user review
+    # and save the file after any corrections are made.
 
     print("PROGRESS:100", flush=True)
     print("RESULTS:" + json.dumps(result), flush=True)

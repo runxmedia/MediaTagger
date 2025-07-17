@@ -29,18 +29,32 @@ def load_faiss_index(index_path, names_path):
 
 def get_video_info(video_path, ffprobe_path):
     """Gets video info using ffprobe, using the provided absolute path."""
-    # MODIFIED: Use the full path to ffprobe passed as an argument
-    cmd = [ffprobe_path, '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,nb_frames', '-of', 'json', video_path]
+    cmd = [
+        ffprobe_path,
+        '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height,nb_frames,avg_frame_rate',
+        '-of', 'json', video_path
+    ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         info = json.loads(result.stdout)['streams'][0]
         if 'nb_frames' not in info:
-            # MODIFIED: Use the full path to ffprobe in the fallback command as well
-            cmd_fallback = [ffprobe_path, '-v', 'error', '-count_frames', '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_frames', '-of', 'default=nokey=1:noprint_wrappers=1', video_path]
+            cmd_fallback = [
+                ffprobe_path, '-v', 'error', '-count_frames',
+                '-select_streams', 'v:0',
+                '-show_entries', 'stream=nb_read_frames',
+                '-of', 'default=nokey=1:noprint_wrappers=1', video_path
+            ]
             result_fallback = subprocess.run(cmd_fallback, capture_output=True, text=True, check=True)
             info['nb_frames'] = int(result_fallback.stdout.strip())
-        width, height, total_frames = int(info['width']), int(info['height']), int(info['nb_frames'])
-        return width, height, total_frames
+        width = int(info['width'])
+        height = int(info['height'])
+        total_frames = int(info['nb_frames'])
+        fr_str = info.get('avg_frame_rate', '0/1')
+        num, den = map(float, fr_str.split('/'))
+        fps = num / den if den != 0 else 0.0
+        return width, height, total_frames, fps
     except Exception as e:
         # This error message is what you saw in the dialog
         print(f"Error getting video info with ffprobe: {e}", file=sys.stderr)
@@ -49,8 +63,7 @@ def get_video_info(video_path, ffprobe_path):
 # MODIFIED: Add ffmpeg_path and ffprobe_path to the function signature
 def process_video_from_index(app, faiss_index, names, ffmpeg_path, ffprobe_path, args):
     show_preview = args.preview
-    # MODIFIED: Pass ffprobe_path to the get_video_info function
-    original_width, original_height, total_frames = get_video_info(args.video_path, ffprobe_path)
+    original_width, original_height, total_frames, fps = get_video_info(args.video_path, ffprobe_path)
 
     if total_frames == 0:
         print("Could not determine total frames. Progress bar will be disabled.", file=sys.stderr)
@@ -78,6 +91,7 @@ def process_video_from_index(app, faiss_index, names, ffmpeg_path, ffprobe_path,
     process = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     frame_size = width * height * 3
     found_faces_set = set()
+    detections = []
     frame_count = 0
     should_quit = False
     print("PROGRESS:0", flush=True)
@@ -95,6 +109,7 @@ def process_video_from_index(app, faiss_index, names, ffmpeg_path, ffprobe_path,
 
         frame = np.frombuffer(raw_frame, dtype='uint8').reshape((height, width, 3))
         faces_in_frame = app.get(frame)
+        current_time = frame_count / fps if fps > 0 else 0
 
         preview_frame = frame.copy() if show_preview else None
 
@@ -109,6 +124,7 @@ def process_video_from_index(app, faiss_index, names, ffmpeg_path, ffprobe_path,
             if distance < RECOGNITION_THRESHOLD:
                 best_match_name = names[best_match_index]
                 found_faces_set.add(best_match_name)
+                detections.append({"time": current_time, "name": best_match_name})
 
             if show_preview:
                 bbox = face.bbox.astype(int)
@@ -127,7 +143,8 @@ def process_video_from_index(app, faiss_index, names, ffmpeg_path, ffprobe_path,
         cv2.destroyAllWindows()
 
     sorted_names = sorted(list(found_faces_set))
-    print(f"RESULTS:{json.dumps(sorted_names)}", flush=True)
+    result = {"names": sorted_names, "detections": detections}
+    print(f"RESULTS:{json.dumps(result)}", flush=True)
 
 
 def main():
