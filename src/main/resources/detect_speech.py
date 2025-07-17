@@ -3,6 +3,11 @@ import sys
 import json
 import torch
 import whisperx
+try:
+    # Newer versions of whisperx expose DiarizationPipeline under whisperx.diarize
+    from whisperx.diarize import DiarizationPipeline
+except Exception:  # Fallback for very old versions
+    DiarizationPipeline = getattr(whisperx, "DiarizationPipeline", None)
 
 
 def transcribe_video(path):
@@ -16,7 +21,9 @@ def transcribe_video(path):
     model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)
     result = whisperx.align(result["segments"], model_a, metadata, audio, device)
 
-    diarize_model = whisperx.DiarizationPipeline(use_auth_token=False, device=device)
+    if DiarizationPipeline is None:
+        raise AttributeError("Installed whisperx does not provide DiarizationPipeline")
+    diarize_model = DiarizationPipeline(use_auth_token=False, device=device)
     diarize_segments = diarize_model(audio)
     result = whisperx.assign_word_speakers(diarize_segments, result)
     print("PROGRESS:90", flush=True)
