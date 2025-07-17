@@ -152,7 +152,7 @@ public class MainInterface {
         runStartupScript();
 
         // Now, verify dependencies are present
-        pythonExecutablePath = findExecutable("python3");
+        pythonExecutablePath = findCompatiblePython();
         ffmpegExecutablePath = findExecutable("ffmpeg");
         ffprobeExecutablePath = findExecutable("ffprobe");
         if (pythonExecutablePath == null || ffmpegExecutablePath == null || ffprobeExecutablePath == null) {
@@ -241,6 +241,34 @@ public class MainInterface {
             Path fullPath = Paths.get(p, name);
             if (Files.isExecutable(fullPath)) {
                 return fullPath.toString();
+            }
+        }
+        return null;
+    }
+
+    private boolean isCompatiblePython(String path) {
+        try {
+            Process proc = new ProcessBuilder(path, "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')").start();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
+                String ver = reader.readLine();
+                proc.waitFor();
+                if (ver == null) return false;
+                String[] parts = ver.trim().split("\\.");
+                int major = Integer.parseInt(parts[0]);
+                int minor = Integer.parseInt(parts[1]);
+                return major == 3 && minor < 13;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private String findCompatiblePython() {
+        String[] candidates = {"python3.11", "python3.10", "python3"};
+        for (String name : candidates) {
+            String path = findExecutable(name);
+            if (path != null && isCompatiblePython(path)) {
+                return path;
             }
         }
         return null;

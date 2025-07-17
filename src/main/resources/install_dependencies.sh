@@ -50,18 +50,33 @@ run_setup() {
   fi
 
   # --- Step 3: Check for and Install Python ---
-  echo "Searching for Python 3..."
-  PYTHON_CMD=$(find_command "python3")
+  echo "Searching for Python 3.11 or 3.10..."
+  PYTHON_CMD=""
+  # Prefer a compatible version of Python. WhisperX does not support 3.13+.
+  for candidate in python3.11 python3.10 python3; do
+    PYTHON_CMD=$(find_command "$candidate") && break
+  done
+
   if [ -n "$PYTHON_CMD" ]; then
-    echo "Python 3 found at: $PYTHON_CMD"
-  else
-    echo "Python 3 not found. Installing with Homebrew..."
-    "$BREW_CMD" install python
-    PYTHON_CMD=$(find_command "python3")
+    # Verify the found Python version is < 3.13
+    PY_VER=$("$PYTHON_CMD" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    MAJOR=${PY_VER%%.*}
+    MINOR=${PY_VER#*.}
+    if [ "$MAJOR" -ne 3 ] || [ "$MINOR" -ge 13 ]; then
+      PYTHON_CMD=""
+    fi
+  fi
+
+  if [ -z "$PYTHON_CMD" ]; then
+    echo "Compatible Python not found. Installing Python 3.11 with Homebrew..."
+    "$BREW_CMD" install python@3.11
+    PYTHON_CMD=$(find_command "python3.11")
     if [ -z "$PYTHON_CMD" ]; then
-        echo "Error: Could not find 'python3' in search paths even after installation."
+        echo "Error: Could not find a compatible Python after installation."
         return 1
     fi
+  else
+    echo "Python found at: $PYTHON_CMD"
   fi
 
   # --- Step 4: Install Python Dependencies ---
