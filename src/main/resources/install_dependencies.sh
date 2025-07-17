@@ -99,7 +99,8 @@ SCRIPT_STATUS=$? # Capture the success (0) or failure (1) code from the function
 if [ $SCRIPT_STATUS -eq 0 ]; then
     echo "✅ Setup completed successfully."
     # On success, remove the temporary log file.
-    rm "$TMP_LOG"
+#    rm "$TMP_LOG"
+    mv "$TMP_LOG" "$LOG_FILE"
 else
     # On failure, move the temporary log to the user's Desktop.
     mv "$TMP_LOG" "$LOG_FILE"
