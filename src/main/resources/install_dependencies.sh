@@ -3,7 +3,8 @@
 # It creates a log file on the Desktop ONLY if the setup process fails.
 
 # Define the final log file path for when an error occurs
-LOG_FILE="$HOME/Desktop/install_dependencies.log"
+LOG_DIR="$HOME/Desktop"
+LOG_FILE="$LOG_DIR/install_dependencies.log"
 
 # Create a secure temporary file to capture all output.
 # Exit if the temporary file cannot be created.
@@ -86,6 +87,8 @@ run_setup() {
   # WhisperX from GitHub with custom dependencies for newer Python versions
   "$PYTHON_CMD" -m pip install --break-system-packages --user --no-deps git+https://github.com/m-bain/whisperX.git
   "$PYTHON_CMD" -m pip install --break-system-packages --user ctranslate2==4.6.0 faster-whisper nltk
+  # Install diarization dependencies for whisperx
+  "$PYTHON_CMD" -m pip install --break-system-packages --user pyannote.audio
 
   # --- Step 5: Finalize ---
   # Check the exit code of the last command (pip install)
@@ -113,11 +116,11 @@ SCRIPT_STATUS=$? # Capture the success (0) or failure (1) code from the function
 # Check the status and decide whether to keep or discard the log.
 if [ $SCRIPT_STATUS -eq 0 ]; then
     echo "✅ Setup completed successfully."
-    # On success, remove the temporary log file.
-#    rm "$TMP_LOG"
-    mv "$TMP_LOG" "$LOG_FILE"
+    # Cleanup the temporary log on success.
+    rm "$TMP_LOG"
 else
-    # On failure, move the temporary log to the user's Desktop.
+    # Ensure the Desktop directory exists before moving the log file
+    mkdir -p "$LOG_DIR"
     mv "$TMP_LOG" "$LOG_FILE"
     echo "❌ Setup failed. A detailed log file has been saved to your Desktop:"
     echo "   $LOG_FILE"

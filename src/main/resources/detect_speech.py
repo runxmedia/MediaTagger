@@ -9,6 +9,12 @@ try:
 except Exception:  # Fallback for very old versions
     DiarizationPipeline = getattr(whisperx, "DiarizationPipeline", None)
 
+# Attempt to read a Hugging Face token from the environment to allow
+# downloading the diarization model when required.  Some pyannote models
+# require authentication, and failing to provide a token may lead to the
+# pipeline failing to load with an AttributeError.
+HF_TOKEN = os.environ.get("HF_TOKEN")
+
 
 def transcribe_video(path):
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -23,7 +29,20 @@ def transcribe_video(path):
 
     if DiarizationPipeline is None:
         raise AttributeError("Installed whisperx does not provide DiarizationPipeline")
-    diarize_model = DiarizationPipeline(use_auth_token=False, device=device)
+
+    # Pass the HF token to the pipeline if available.  If HF_TOKEN is not set,
+    # WhisperX will attempt an anonymous download which may fail for protected
+    # models, so we warn the user to set the token for reliability.
+    try:
+        diarize_model = DiarizationPipeline(use_auth_token=HF_TOKEN or False, device=device)
+    except Exception as e:
+        raise RuntimeError(
+            "Failed to initialize the diarization model. Ensure pyannote.audio is installed and HF_TOKEN is set if required."
+        ) from e
+
+    if HF_TOKEN is None:
+        print("WARNING: HF_TOKEN not set. Diarization model download may fail.", file=sys.stderr)
+
     diarize_segments = diarize_model(audio)
     result = whisperx.assign_word_speakers(diarize_segments, result)
     print("PROGRESS:90", flush=True)
