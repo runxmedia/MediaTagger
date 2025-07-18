@@ -11,8 +11,19 @@ except Exception:  # Fallback for very old versions
 
 # --- MODIFIED: This function now accepts the hf_token as an argument ---
 def transcribe_video(path, hf_token):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = whisperx.load_model("large-v2", device, compute_type="float16" if device == "cuda" else "int8")
+    # Prefer CUDA, then Apple's Metal (MPS), and fall back to CPU.
+    if torch.cuda.is_available():
+        device = "cuda"
+        compute_type = "float16"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+        # float16 is the most efficient data type supported by MPS
+        compute_type = "float16"
+    else:
+        device = "cpu"
+        compute_type = "int8"
+
+    model = whisperx.load_model("large-v2", device, compute_type=compute_type)
     audio = whisperx.load_audio(path)
     print("PROGRESS:10", flush=True)
     result = model.transcribe(audio)
