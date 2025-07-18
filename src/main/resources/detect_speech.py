@@ -11,22 +11,33 @@ except Exception:  # Fallback for very old versions
 
 # --- MODIFIED: This function now accepts the hf_token as an argument ---
 def transcribe_video(path, hf_token):
-    # Prefer CUDA, then Apple's Metal (MPS), and fall back to CPU.
+    # Prefer GPU acceleration when available. On Apple Silicon this means MPS.
     if torch.cuda.is_available():
         device = "cuda"
         compute_type = "float16"
-    elif torch.backends.mps.is_available():
+    elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
         device = "mps"
-        # float16 is the most efficient data type supported by MPS
         compute_type = "float16"
     else:
         device = "cpu"
         compute_type = "int8"
 
-    model = whisperx.load_model("large-v2", device, compute_type=compute_type)
     audio = whisperx.load_audio(path)
     print("PROGRESS:10", flush=True)
-    result = model.transcribe(audio)
+
+    try:
+        model = whisperx.load_model("large-v2", device, compute_type=compute_type)
+        result = model.transcribe(audio)
+    except ValueError as e:
+        # CTranslate2 does not currently support Apple's MPS backend. Fall back
+        # to the official Whisper implementation when running on MPS so we still
+        # get GPU acceleration.
+        if device == "mps" and "unsupported device mps" in str(e).lower():
+            import whisper  # openai/whisper
+            model = whisper.load_model("large-v2").to(device)
+            result = model.transcribe(audio)
+        else:
+            raise
     print("PROGRESS:60", flush=True)
 
     model_a, metadata = whisperx.load_align_model(language_code=result["language"], device=device)

@@ -91,9 +91,16 @@ run_setup() {
   echo "Installing Python face recognition libraries using $PYTHON_CMD..."
   "$PYTHON_CMD" -m pip install --upgrade pip
   "$PYTHON_CMD" -m pip install --break-system-packages --user numpy torch torchaudio whisperx insightface faiss-cpu opencv-python tqdm onnxruntime
+  "$PYTHON_CMD" -m pip install --break-system-packages --user openai-whisper
   # WhisperX from GitHub with custom dependencies for newer Python versions
   "$PYTHON_CMD" -m pip install --break-system-packages --user --no-deps git+https://github.com/m-bain/whisperX.git
-  "$PYTHON_CMD" -m pip install --break-system-packages --user ctranslate2==4.6.0 faster-whisper nltk
+  # Install CTranslate2 with hardware acceleration support when possible
+  if [[ "$(uname)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+    # Apple Silicon wheels include MPS acceleration
+    "$PYTHON_CMD" -m pip install --break-system-packages --user ctranslate2>=4.6.0 faster-whisper nltk
+  else
+    "$PYTHON_CMD" -m pip install --break-system-packages --user ctranslate2==4.6.0 faster-whisper nltk
+  fi
   # Install diarization dependencies for whisperx
   "$PYTHON_CMD" -m pip install --break-system-packages --user pyannote.audio
 
