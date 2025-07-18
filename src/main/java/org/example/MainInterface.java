@@ -24,9 +24,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
 import org.apache.commons.imaging.Imaging;
@@ -560,86 +557,35 @@ public class MainInterface {
                     ProcessBuilder pb = new ProcessBuilder(command);
                     processHolder[0] = pb.start();
 
-                    Process speechProcess = null;
-                    if (chk_text_to_speech.isSelected()) {
-                        ArrayList<String> speechCmd = new ArrayList<>();
-                        speechCmd.add(pythonExecutablePath);
-                        speechCmd.add(speechScriptPath.toString());
-                        speechCmd.add(video.getAbsolutePath());
-                        // --- MODIFIED: Pass the loaded token as a command-line argument ---
-                        speechCmd.add(hfToken);
-                        ProcessBuilder speechPb = new ProcessBuilder(speechCmd);
-                        speechProcess = speechPb.start();
-                    }
-
                     final List<String> recognizedNamesForVideo = new ArrayList<>();
                     final List<Detection> detectionsForVideo = new ArrayList<>();
 
                     try (
                             BufferedReader reader = new BufferedReader(new InputStreamReader(processHolder[0].getInputStream()));
-                            BufferedReader errorReader = new BufferedReader(new InputStreamReader(processHolder[0].getErrorStream()));
-                            BufferedReader speechReader = speechProcess != null ? new BufferedReader(new InputStreamReader(speechProcess.getInputStream())) : null;
-                            BufferedReader speechError = speechProcess != null ? new BufferedReader(new InputStreamReader(speechProcess.getErrorStream())) : null
+                            BufferedReader errorReader = new BufferedReader(new InputStreamReader(processHolder[0].getErrorStream()))
                     ) {
-                        ExecutorService exec = Executors.newFixedThreadPool(speechProcess != null ? 2 : 1);
-
-                        Future<?> faceFuture = exec.submit(() -> {
-                            try {
-                                String line;
-                                while ((line = reader.readLine()) != null) {
-                                    if (line.startsWith("PROGRESS:")) {
-                                        setProgress(Integer.parseInt(line.substring(9)));
-                                    } else if (line.startsWith("RESULTS:")) {
-                                        String jsonOutput = line.substring(8);
-                                        JSONObject obj = new JSONObject(jsonOutput);
-                                        JSONArray namesArr = obj.getJSONArray("names");
-                                        for (int j = 0; j < namesArr.length(); j++) {
-                                            recognizedNamesForVideo.add(namesArr.getString(j));
-                                        }
-                                        JSONArray detArr = obj.getJSONArray("detections");
-                                        for (int j = 0; j < detArr.length(); j++) {
-                                            JSONObject d = detArr.getJSONObject(j);
-                                            detectionsForVideo.add(new Detection(d.getDouble("time"), d.getString("name")));
-                                        }
-                                    } else {
-                                        System.out.println("Python stdout: " + line);
-                                    }
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            if (line.startsWith("PROGRESS:")) {
+                                setProgress(Integer.parseInt(line.substring(9)));
+                            } else if (line.startsWith("RESULTS:")) {
+                                String jsonOutput = line.substring(8);
+                                JSONObject obj = new JSONObject(jsonOutput);
+                                JSONArray namesArr = obj.getJSONArray("names");
+                                for (int j = 0; j < namesArr.length(); j++) {
+                                    recognizedNamesForVideo.add(namesArr.getString(j));
                                 }
-                            } catch (IOException ignored) {}
-                        });
-
-                        final StringBuilder speechResult = new StringBuilder();
-                        Future<?> speechFuture = null;
-                        if (speechProcess != null) {
-                            speechFuture = exec.submit(() -> {
-                                try {
-                                    String line;
-                                    while ((line = speechReader.readLine()) != null) {
-                                        if (line.startsWith("PROGRESS:")) {
-                                            int val = Integer.parseInt(line.substring(9));
-                                            SwingUtilities.invokeLater(() -> {
-                                                speechProgressBar.setValue(val);
-                                                speechLabel.setText("Speech Progress: " + val + "%");
-                                            });
-                                        } else if (line.startsWith("RESULTS:")) {
-                                            speechResult.append(line.substring(8));
-                                        } else {
-                                            System.out.println("Speech stdout: " + line);
-                                        }
-                                    }
-                                } catch (IOException ignored) {}
-                            });
+                                JSONArray detArr = obj.getJSONArray("detections");
+                                for (int j = 0; j < detArr.length(); j++) {
+                                    JSONObject d = detArr.getJSONObject(j);
+                                    detectionsForVideo.add(new Detection(d.getDouble("time"), d.getString("name")));
+                                }
+                            } else {
+                                System.out.println("Python stdout: " + line);
+                            }
                         }
 
-                        faceFuture.get();
-                        if (speechFuture != null) speechFuture.get();
-
                         int exitCode = processHolder[0].waitFor();
-                        int speechCode = 0;
-                        if (speechProcess != null) speechCode = speechProcess.waitFor();
-
-                        exec.shutdown();
-
                         if (exitCode != 0) {
                             final String errorOutput = errorReader.lines().collect(Collectors.joining("\n"));
                             final String errorMessage = "The face recognition failed for file '" + videoName + "' (exit code " + exitCode + ").\n\nError:\n" + errorOutput;
@@ -648,20 +594,52 @@ public class MainInterface {
                             );
                             throw new IOException(errorMessage);
                         }
+                    }
 
-                        if (speechProcess != null && speechCode != 0) {
-                            final String errorOutput = speechError.lines().collect(Collectors.joining("\n"));
-                            final String errorMessage = "The speech detection failed for file '" + videoName + "' (exit code " + speechCode + ").\n\nError:\n" + errorOutput;
-                            SwingUtilities.invokeLater(() ->
-                                    JOptionPane.showMessageDialog(frame, errorMessage, "Speech Detection Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon))
-                            );
+                    results.put(video, new FaceData(recognizedNamesForVideo, detectionsForVideo));
+
+                    if (isCancelled()) break;
+
+                    if (chk_text_to_speech.isSelected()) {
+                        ArrayList<String> speechCmd = new ArrayList<>();
+                        speechCmd.add(pythonExecutablePath);
+                        speechCmd.add(speechScriptPath.toString());
+                        speechCmd.add(video.getAbsolutePath());
+                        speechCmd.add(hfToken);
+                        ProcessBuilder speechPb = new ProcessBuilder(speechCmd);
+                        Process speechProcess = speechPb.start();
+
+                        try (
+                                BufferedReader speechReader = new BufferedReader(new InputStreamReader(speechProcess.getInputStream()));
+                                BufferedReader speechError = new BufferedReader(new InputStreamReader(speechProcess.getErrorStream()))
+                        ) {
+                            String line;
+                            StringBuilder speechResult = new StringBuilder();
+                            while ((line = speechReader.readLine()) != null) {
+                                if (line.startsWith("PROGRESS:")) {
+                                    int val = Integer.parseInt(line.substring(9));
+                                    SwingUtilities.invokeLater(() -> {
+                                        speechProgressBar.setValue(val);
+                                        speechLabel.setText("Speech Progress: " + val + "%");
+                                    });
+                                } else if (line.startsWith("RESULTS:")) {
+                                    speechResult.append(line.substring(8));
+                                } else {
+                                    System.out.println("Speech stdout: " + line);
+                                }
+                            }
+
+                            int speechCode = speechProcess.waitFor();
+                            if (speechCode != 0) {
+                                final String errorOutput = speechError.lines().collect(Collectors.joining("\n"));
+                                final String errorMessage = "The speech detection failed for file '" + videoName + "' (exit code " + speechCode + ").\n\nError:\n" + errorOutput;
+                                SwingUtilities.invokeLater(() ->
+                                        JOptionPane.showMessageDialog(frame, errorMessage, "Speech Detection Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon))
+                                );
+                            } else if (speechResult.length() > 0) {
+                                transcripts.put(video, speechResult.toString());
+                            }
                         }
-
-                        if (speechProcess != null && speechResult.length() > 0) {
-                            transcripts.put(video, speechResult.toString());
-                        }
-
-                        results.put(video, new FaceData(recognizedNamesForVideo, detectionsForVideo));
                     }
                 }
                 return results;

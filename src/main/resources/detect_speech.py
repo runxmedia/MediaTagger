@@ -40,9 +40,26 @@ def transcribe_video(path, hf_token):
 
     whisper.timing.dtw = patched_dtw
 
-    # Transcribe using the loaded audio waveform
-    result = model.transcribe(audio_waveform, word_timestamps=True)
-    print("PROGRESS:60", flush=True)
+    # --- Modified: Transcribe in smaller chunks for granular progress ---
+    sample_rate = whisper.audio.SAMPLE_RATE
+    chunk_size = sample_rate * 30  # 30 second chunks
+    total_samples = audio_waveform.shape[-1]
+    result = {"segments": []}
+    for start in range(0, total_samples, chunk_size):
+        end = min(start + chunk_size, total_samples)
+        chunk_wave = audio_waveform[start:end]
+        chunk_res = model.transcribe(chunk_wave, word_timestamps=True)
+        offset = start / sample_rate
+        for seg in chunk_res.get("segments", []):
+            seg["start"] += offset
+            seg["end"] += offset
+            if "words" in seg:
+                for w in seg["words"]:
+                    w["start"] += offset
+                    w["end"] += offset
+        result["segments"].extend(chunk_res.get("segments", []))
+        progress = 10 + int((end / total_samples) * 50)
+        print(f"PROGRESS:{progress}", flush=True)
 
     diarize_model = Pipeline.from_pretrained(
         "pyannote/speaker-diarization-3.1", use_auth_token=hf_token
@@ -50,20 +67,24 @@ def transcribe_video(path, hf_token):
     diarize_model.to(torch.device(device))
 
     # --- START OF FIX FOR LibsndfileError ---
-    # 2. Prepare the audio for pyannote. It expects a dictionary containing a
-    #    2D torch.Tensor (channels, samples) and the sample rate.
-    audio_for_diarization = {
-        "waveform": torch.from_numpy(audio_waveform).unsqueeze(0),
-        "sample_rate": whisper.audio.SAMPLE_RATE,
-    }
-
-    # 3. Pass the in-memory audio data to the diarization model.
-    diarization = diarize_model(audio_for_diarization)
-    # --- END OF FIX ---
-
+    # Process diarization in the same chunked manner for progress updates
     segments = []
-    for turn, _, speaker in diarization.itertracks(yield_label=True):
-        segments.append({"start": turn.start, "end": turn.end, "speaker": speaker})
+    for start in range(0, total_samples, chunk_size):
+        end = min(start + chunk_size, total_samples)
+        audio_for_diarization = {
+            "waveform": torch.from_numpy(audio_waveform[start:end]).unsqueeze(0),
+            "sample_rate": whisper.audio.SAMPLE_RATE,
+        }
+
+        diarization = diarize_model(audio_for_diarization)
+
+        offset = start / sample_rate
+        for turn, _, speaker in diarization.itertracks(yield_label=True):
+            segments.append({"start": turn.start + offset, "end": turn.end + offset, "speaker": speaker})
+
+        progress = 60 + int((end / total_samples) * 30)
+        print(f"PROGRESS:{progress}", flush=True)
+    # --- END OF FIX ---
 
     for seg in result.get("segments", []):
         word_speakers = []
