@@ -739,7 +739,15 @@ public class MainInterface {
 
     private String showTranscriptReviewDialog(File video, String json, FaceData faceData) {
         JSONObject obj = new JSONObject(json);
-        JSONArray segments = obj.getJSONArray("segments");
+        JSONArray rawSegments = obj.getJSONArray("segments");
+        JSONArray segments = new JSONArray();
+        for (int i = 0; i < rawSegments.length(); i++) {
+            JSONObject seg = rawSegments.getJSONObject(i);
+            String text = seg.optString("text", "").trim();
+            if (!text.isEmpty()) {
+                segments.put(seg);
+            }
+        }
 
         Map<String, String> speakerNames = new LinkedHashMap<>();
         for (int i = 0; i < segments.length(); i++) {
@@ -784,14 +792,17 @@ public class MainInterface {
 
         Runnable updateArea = () -> {
             StringBuilder sb = new StringBuilder();
-            for (int i=0;i<segments.length();i++) {
+            for (int i = 0; i < segments.length(); i++) {
                 JSONObject seg = segments.getJSONObject(i);
+                String text = seg.getString("text").trim();
+                if (text.isEmpty()) {
+                    continue;
+                }
                 String spk = seg.getString("speaker");
                 String name = fields.get(spk).getText();
                 double start = seg.getDouble("start");
                 double end = seg.getDouble("end");
-                String text = seg.getString("text").trim();
-                sb.append(String.format("[%.2f-%.2f] %s: %s%n", start,end,name,text));
+                sb.append(String.format("[%.2f-%.2f] %s: %s%n", start, end, name, text));
             }
             transcriptArea.setText(sb.toString());
         };
