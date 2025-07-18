@@ -487,40 +487,38 @@ public class MainInterface {
         }
         final JProgressBar overallProgressBar = new JProgressBar(0, videos.size() * 100);
         final JLabel overallLabel = new JLabel("Overall Progress");
+
+        ImageIcon walkingIcon = null;
+        URL walkingUrl = getClass().getClassLoader().getResource("walking_sun.gif");
+        if (walkingUrl != null) {
+            walkingIcon = new ImageIcon(walkingUrl);
+        }
+        final JLabel gifLabel = new JLabel(walkingIcon);
+
         final JLabel statusLabel = new JLabel("Starting...");
-        final JProgressBar frameProgressBar = new JProgressBar(0, 100);
-        final JLabel frameLabel = new JLabel("Video Progress: 0%");
-        final JProgressBar speechProgressBar = new JProgressBar(0, 100);
-        final JLabel speechLabel = new JLabel("Speech Progress: 0%");
+        final JProgressBar videoProgressBar = new JProgressBar(0, 100);
         final JButton cancelButton = new JButton("Cancel");
         statusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        frameProgressBar.setAlignmentX(Component.CENTER_ALIGNMENT);
-        frameLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        gifLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        videoProgressBar.setAlignmentX(Component.CENTER_ALIGNMENT);
         overallProgressBar.setAlignmentX(Component.CENTER_ALIGNMENT);
         overallLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        speechProgressBar.setAlignmentX(Component.CENTER_ALIGNMENT);
-        speechLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         JPanel panel = new JPanel(new BorderLayout(5, 5));
         panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         JPanel progressPanel = new JPanel();
         progressPanel.setLayout(new BoxLayout(progressPanel, BoxLayout.Y_AXIS));
-        progressPanel.add(statusLabel);
+        progressPanel.add(gifLabel);
         progressPanel.add(Box.createVerticalStrut(5));
-        progressPanel.add(frameProgressBar);
-        progressPanel.add(frameLabel);
-        if (chk_text_to_speech.isSelected()) {
-            progressPanel.add(Box.createVerticalStrut(5));
-            progressPanel.add(speechProgressBar);
-            progressPanel.add(speechLabel);
-        }
+        progressPanel.add(videoProgressBar);
+        progressPanel.add(Box.createVerticalStrut(5));
+        progressPanel.add(statusLabel);
         progressPanel.add(Box.createVerticalStrut(10));
         progressPanel.add(overallProgressBar);
         progressPanel.add(overallLabel);
         panel.add(progressPanel, BorderLayout.CENTER);
         panel.add(cancelButton, BorderLayout.SOUTH);
         progressDialog.setContentPane(panel);
-        int dlgHeight = chk_text_to_speech.isSelected() ? 250 : 200;
-        progressDialog.setSize(400, dlgHeight);
+        progressDialog.setSize(400, 250);
         progressDialog.setLocationRelativeTo(frame);
         final Process[] processHolder = new Process[1];
         final int[] currentVideoIndex = {0};
@@ -534,12 +532,16 @@ public class MainInterface {
                 Path namesPath = resourceDir.resolve("names.json");
                 Path speechScriptPath = resourceDir.resolve("detect_speech.py");
 
+                final int totalStages = chk_text_to_speech.isSelected() ? 2 : 1;
+                final double stepWeight = 100.0 / totalStages;
+
                 for (int i = 0; i < videos.size(); i++) {
                     if (isCancelled()) break;
                     currentVideoIndex[0] = i;
                     File video = videos.get(i);
                     final String videoName = video.getName();
-                    SwingUtilities.invokeLater(() -> statusLabel.setText("Processing: " + videoName));
+                    setProgress(0);
+                    SwingUtilities.invokeLater(() -> statusLabel.setText(videoName + " - Detecting Faces"));
 
                     ArrayList<String> command = new ArrayList<>();
                     command.add(pythonExecutablePath);
@@ -567,7 +569,9 @@ public class MainInterface {
                         String line;
                         while ((line = reader.readLine()) != null) {
                             if (line.startsWith("PROGRESS:")) {
-                                setProgress(Integer.parseInt(line.substring(9)));
+                                int val = Integer.parseInt(line.substring(9));
+                                int mapped = (int) (val * stepWeight / 100.0);
+                                setProgress(mapped);
                             } else if (line.startsWith("RESULTS:")) {
                                 String jsonOutput = line.substring(8);
                                 JSONObject obj = new JSONObject(jsonOutput);
@@ -608,6 +612,7 @@ public class MainInterface {
                         speechCmd.add(hfToken);
                         ProcessBuilder speechPb = new ProcessBuilder(speechCmd);
                         Process speechProcess = speechPb.start();
+                        SwingUtilities.invokeLater(() -> statusLabel.setText(videoName + " - Detecting Speech"));
 
                         try (
                                 BufferedReader speechReader = new BufferedReader(new InputStreamReader(speechProcess.getInputStream()));
@@ -618,10 +623,10 @@ public class MainInterface {
                             while ((line = speechReader.readLine()) != null) {
                                 if (line.startsWith("PROGRESS:")) {
                                     int val = Integer.parseInt(line.substring(9));
-                                    SwingUtilities.invokeLater(() -> {
-                                        speechProgressBar.setValue(val);
-                                        speechLabel.setText("Speech Progress: " + val + "%");
-                                    });
+                                    int mapped = (int) (stepWeight + val * stepWeight / 100.0);
+                                    setProgress(mapped);
+                                    final String stepTxt = val < 60 ? "Detecting Speech" : "Identifying Speakers";
+                                    SwingUtilities.invokeLater(() -> statusLabel.setText(videoName + " - " + stepTxt));
                                 } else if (line.startsWith("RESULTS:")) {
                                     speechResult.append(line.substring(8));
                                 } else {
@@ -661,11 +666,10 @@ public class MainInterface {
 
         worker.addPropertyChangeListener(evt -> {
             if ("progress".equals(evt.getPropertyName())) {
-                int frameProgress = (Integer) evt.getNewValue();
-                frameProgressBar.setValue(frameProgress);
-                frameLabel.setText("Video Progress: " + frameProgress + "%");
+                int val = (Integer) evt.getNewValue();
+                videoProgressBar.setValue(val);
                 int videoBaseProgress = currentVideoIndex[0] * 100;
-                int overallProgress = videoBaseProgress + frameProgress;
+                int overallProgress = videoBaseProgress + val;
                 overallProgressBar.setValue(overallProgress);
                 overallLabel.setText("Overall Progress: " + (currentVideoIndex[0] + 1) + " / " + videos.size());
             }
