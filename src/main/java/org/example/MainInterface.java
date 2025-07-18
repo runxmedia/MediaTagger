@@ -766,7 +766,11 @@ public class MainInterface {
         Map<String, String> speakerNames = new LinkedHashMap<>();
         for (int i = 0; i < segments.length(); i++) {
             JSONObject seg = segments.getJSONObject(i);
-            String spk = seg.getString("speaker");
+            String spk = seg.optString("speaker", null);
+            if (spk == null) {
+                spk = "speaker" + i;
+                seg.put("speaker", spk);
+            }
             double start = seg.getDouble("start");
             double end = seg.getDouble("end");
             if (!speakerNames.containsKey(spk)) {
