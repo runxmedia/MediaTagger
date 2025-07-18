@@ -19,13 +19,32 @@ def transcribe_video(path, hf_token):
     audio = whisper.load_audio(path)
     print("PROGRESS:10", flush=True)
 
-    model = whisper.load_model("large-v2", device=device)
+    # Load the Whisper model on CPU
+    model = whisper.load_model("large-v2", device="cpu")
+
+    # --- START OF FIX ---
+    # The model includes a sparse alignment_heads buffer, which is incompatible with MPS.
+    # We remove it from the model before moving to the device, and then restore it.
+
+    # 1. Save the sparse alignment_heads buffer and remove it from the model.
+    alignment_heads = model.alignment_heads
+    model.alignment_heads = None
+
+    # 2. Move the rest of the model to the MPS device.
+    model = model.to(device)
+
+    # 3. Restore the sparse alignment_heads buffer on the CPU.
+    model.register_buffer("alignment_heads", alignment_heads, persistent=False)
+    # --- END OF FIX ---
+
     result = model.transcribe(audio, word_timestamps=True)
     print("PROGRESS:60", flush=True)
 
     diarize_model = Pipeline.from_pretrained(
         "pyannote/speaker-diarization-3.1", use_auth_token=hf_token
     )
+    # Move diarization model to the same device
+    diarize_model.to(torch.device(device))
     diarization = diarize_model(path)
 
     # --- Assign speaker labels to words and segments ---
