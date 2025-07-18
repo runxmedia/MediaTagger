@@ -518,7 +518,7 @@ public class MainInterface {
         panel.add(progressPanel, BorderLayout.CENTER);
         panel.add(cancelButton, BorderLayout.SOUTH);
         progressDialog.setContentPane(panel);
-        progressDialog.setSize(400, 250);
+        progressDialog.setSize(700, 550);
         progressDialog.setLocationRelativeTo(frame);
         final Process[] processHolder = new Process[1];
         final int[] currentVideoIndex = {0};
