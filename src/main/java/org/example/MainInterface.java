@@ -915,7 +915,7 @@ public class MainInterface {
         if (rdo_finished.isSelected()) {
             destinationPath = Paths.get("/Volumes/RunMedia/XGridLibrary/" + year + "/");
         } else {
-            String projectName = JOptionPane.showInputDialog(frame, "Enter the Project Name for the B-Roll folder:", "Project Name", JOptionPane.PLAIN_MESSAGE);
+            String projectName = JOptionPane.showInputDialog(frame, "Enter the Project Name:", "Project Name", JOptionPane.PLAIN_MESSAGE);
             if (projectName == null || projectName.trim().isEmpty()) {
                 JOptionPane.showMessageDialog(frame, "Copy canceled: Project name cannot be empty.", "Canceled", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
                 return;
@@ -996,7 +996,13 @@ public class MainInterface {
     private boolean isVideoOrPhoto(File file) {
         String name = file.getName().toLowerCase();
         for (String ext : VIDEO_PHOTO_EXTENSIONS)
-            if (name.endsWith(ext)) return true;
+            if (name.endsWith(ext)){
+                if(file.getAbsolutePath().contains("Volumes/RunMedia")) {
+                    JOptionPane.showMessageDialog(frame, name + " cannot be tagged because it is located on the server.\nPlease tag files from your computer before uploading to RunMedia", "File Location Error", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
+                    return false;
+                }
+                return true;
+            }
         return false;
     }
 
