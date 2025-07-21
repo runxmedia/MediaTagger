@@ -77,6 +77,7 @@ public class MainInterface {
     private ArrayList<File> selectedFiles;
     private ArrayList<String> tags;
     private Map<File, String> transcripts;
+    private Map<File, String> projectNames;
     private Location selectedLocation;
     private Path resourceDir;
     private String pythonExecutablePath;
@@ -127,6 +128,7 @@ public class MainInterface {
         selectedFiles = new ArrayList<>();
         tags = new ArrayList<>();
         transcripts = new HashMap<>();
+        projectNames = new HashMap<>();
 
         try {
             setupResources();
@@ -447,6 +449,26 @@ public class MainInterface {
         List<File> videosToProcess = selectedFiles.stream()
                 .filter(f -> f.getName().toLowerCase().endsWith(".mp4"))
                 .collect(Collectors.toList());
+        boolean needProjectNames = !videosToProcess.isEmpty()
+                && !(rdo_finished.isSelected() && !chk_text_to_speech.isSelected())
+                && (chk_copy_files.isSelected() || chk_text_to_speech.isSelected());
+        projectNames.clear();
+        if (needProjectNames) {
+            for (File video : videosToProcess) {
+                String pn = JOptionPane.showInputDialog(frame,
+                        "Enter the Project Name for " + video.getName() + ":",
+                        "Project Name", JOptionPane.PLAIN_MESSAGE);
+                if (pn == null || pn.trim().isEmpty()) {
+                    JOptionPane.showMessageDialog(frame,
+                            "Process canceled: Project name cannot be empty.",
+                            "Canceled", JOptionPane.WARNING_MESSAGE,
+                            new ImageIcon(appIcon));
+                    return;
+                }
+                projectNames.put(video, pn.trim());
+            }
+        }
+
         Map<File, FaceData> faceDataMap = runAllFaceRecognition(videosToProcess);
         Map<File, List<String>> recognizedTags = new LinkedHashMap<>();
         if (faceDataMap != null) {
@@ -471,6 +493,11 @@ public class MainInterface {
                 transcripts.put(file, finalText);
                 File txtFile = new File(file.getParent(), file.getName().replaceFirst("\\.[^.]+$", ".txt"));
                 try (BufferedWriter bw = Files.newBufferedWriter(txtFile.toPath())) {
+                    String pn = projectNames.get(file);
+                    if (pn != null) {
+                        bw.write("Project Name:\n");
+                        bw.write(pn + "\n\n");
+                    }
                     bw.write(finalText);
                 } catch (IOException ex) {
                     ex.printStackTrace();
@@ -910,26 +937,8 @@ public class MainInterface {
             JOptionPane.showMessageDialog(frame, "Could not copy files. The Run Media is not mounted.", "Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
             return;
         }
-        Path destinationPath;
         int year = (int) combo_year.getSelectedItem();
-        if (rdo_finished.isSelected()) {
-            destinationPath = Paths.get("/Volumes/RunMedia/XGridLibrary/" + year + "/");
-        } else {
-            String projectName = JOptionPane.showInputDialog(frame, "Enter the Project Name:", "Project Name", JOptionPane.PLAIN_MESSAGE);
-            if (projectName == null || projectName.trim().isEmpty()) {
-                JOptionPane.showMessageDialog(frame, "Copy canceled: Project name cannot be empty.", "Canceled", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
-                return;
-            }
-            int month = monthCodeToNumber((String) combo_month.getSelectedItem());
-            String folderName = String.format("%d_%02d_%s", year, month, projectName.trim().replace(" ", "_"));
-            destinationPath = Paths.get("/Volumes/RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName + "/");
-        }
-        try {
-            Files.createDirectories(destinationPath);
-        } catch (IOException e) {
-            JOptionPane.showMessageDialog(frame, "Could not create destination folder:\n" + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
-            return;
-        }
+        int month = monthCodeToNumber((String) combo_month.getSelectedItem());
         JDialog copyProgressDialog = new JDialog(frame, "Copying Files...", true);
         if (this.appIcon != null) {
             copyProgressDialog.setIconImage(this.appIcon);
@@ -951,7 +960,17 @@ public class MainInterface {
             protected Void doInBackground() throws Exception {
                 byte[] buffer = new byte[8192];
                 for (File sourceFile : selectedFiles) {
-                    Path destFile = destinationPath.resolve(sourceFile.getName());
+                    Path destDir;
+                    if (rdo_finished.isSelected()) {
+                        destDir = Paths.get("/Volumes/RunMedia/XGridLibrary/" + year + "/");
+                    } else {
+                        String pn = projectNames.get(sourceFile);
+                        if (pn == null) pn = "";
+                        String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
+                        destDir = Paths.get("/Volumes/RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName + "/");
+                    }
+                    Files.createDirectories(destDir);
+                    Path destFile = destDir.resolve(sourceFile.getName());
                     SwingUtilities.invokeLater(() -> copyLabel.setText("Copying: " + sourceFile.getName()));
                     try (InputStream in = new FileInputStream(sourceFile);
                          OutputStream out = new FileOutputStream(destFile.toFile())) {
