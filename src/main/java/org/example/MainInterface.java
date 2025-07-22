@@ -854,24 +854,7 @@ public class MainInterface {
             editPanel.add(row);
         }
 
-        JTextArea transcriptArea = new JTextArea(20,60);
-        transcriptArea.setEditable(false);
-
-        Runnable updateArea = () -> {
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < segments.length(); i++) {
-                JSONObject seg = segments.getJSONObject(i);
-                String spk = seg.getString("speaker");
-                String name = fields.get(spk).getText();
-                double start = seg.getDouble("start");
-                double end = seg.getDouble("end");
-                String text = segmentTextFields.get(i).getText().trim();
-                if (text.isEmpty()) continue;
-                sb.append(String.format("[%.2f-%.2f] %s: %s%n", start, end, name, text));
-            }
-            transcriptArea.setText(sb.toString());
-
-            // Update labels next to each text field
+        Runnable updateLabels = () -> {
             for (int i = 0; i < segments.length(); i++) {
                 JSONObject seg = segments.getJSONObject(i);
                 String spk = seg.getString("speaker");
@@ -884,25 +867,43 @@ public class MainInterface {
 
         for (JTextField tf : segmentTextFields) {
             tf.getDocument().addDocumentListener(new javax.swing.event.DocumentListener(){
-                public void insertUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}
-                public void removeUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}
-                public void changedUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}
+                public void insertUpdate(javax.swing.event.DocumentEvent e){updateLabels.run();}
+                public void removeUpdate(javax.swing.event.DocumentEvent e){updateLabels.run();}
+                public void changedUpdate(javax.swing.event.DocumentEvent e){updateLabels.run();}
             });
         }
 
-        // Update transcript when speaker names change
-        fields.forEach((spk, f) -> f.getDocument().addDocumentListener(new javax.swing.event.DocumentListener(){public void insertUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}public void removeUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}public void changedUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}}));
+        // Update labels when speaker names change
+        fields.forEach((spk, f) -> f.getDocument().addDocumentListener(new javax.swing.event.DocumentListener(){public void insertUpdate(javax.swing.event.DocumentEvent e){updateLabels.run();}public void removeUpdate(javax.swing.event.DocumentEvent e){updateLabels.run();}public void changedUpdate(javax.swing.event.DocumentEvent e){updateLabels.run();}}));
 
-        updateArea.run();
+        updateLabels.run();
 
+        java.util.function.Supplier<String> buildTranscript = () -> {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < segments.length(); i++) {
+                JSONObject seg = segments.getJSONObject(i);
+                String spk = seg.getString("speaker");
+                String name = fields.get(spk).getText();
+                double start = seg.getDouble("start");
+                double end = seg.getDouble("end");
+                String text = segmentTextFields.get(i).getText().trim();
+                if (text.isEmpty()) continue;
+                sb.append(String.format("[%.2f-%.2f] %s: %s%n", start, end, name, text));
+            }
+            return sb.toString();
+        };
+
+        final String[] finalTranscript = new String[1];
         JButton confirm = new JButton("Save Transcript");
-        confirm.addActionListener(e -> dialog.dispose());
+        confirm.addActionListener(e -> {
+            finalTranscript[0] = buildTranscript.get();
+            dialog.dispose();
+        });
 
         JPanel centerPanel = new JPanel();
         centerPanel.setLayout(new BoxLayout(centerPanel, BoxLayout.Y_AXIS));
         centerPanel.add(new JScrollPane(editPanel));
         centerPanel.add(Box.createVerticalStrut(10));
-        centerPanel.add(new JScrollPane(transcriptArea));
 
         dialog.add(namesPanel, BorderLayout.NORTH);
         dialog.add(centerPanel, BorderLayout.CENTER);
@@ -911,9 +912,9 @@ public class MainInterface {
         dialog.setLocationRelativeTo(frame);
         dialog.setVisible(true);
 
-        updateArea.run();
+        updateLabels.run();
 
-        return transcriptArea.getText();
+        return finalTranscript[0];
     }
 
     private void runFinalEmbeddingProcess(Map<File, List<String>> allFileTags) {
