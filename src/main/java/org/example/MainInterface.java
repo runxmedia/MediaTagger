@@ -831,6 +831,29 @@ public class MainInterface {
             namesPanel.add(tf);
         }
 
+        // Panel to edit the text for each segment
+        JPanel editPanel = new JPanel();
+        editPanel.setLayout(new BoxLayout(editPanel, BoxLayout.Y_AXIS));
+
+        java.util.List<JTextField> segmentTextFields = new ArrayList<>();
+        java.util.List<JLabel> segmentLabels = new ArrayList<>();
+        for (int i = 0; i < segments.length(); i++) {
+            JSONObject seg = segments.getJSONObject(i);
+            String spk = seg.getString("speaker");
+            double start = seg.getDouble("start");
+            double end = seg.getDouble("end");
+
+            JLabel lbl = new JLabel();
+            JTextField tf = new JTextField(seg.getString("text"), 40);
+            segmentTextFields.add(tf);
+            segmentLabels.add(lbl);
+
+            JPanel row = new JPanel(new BorderLayout(5,5));
+            row.add(lbl, BorderLayout.WEST);
+            row.add(tf, BorderLayout.CENTER);
+            editPanel.add(row);
+        }
+
         JTextArea transcriptArea = new JTextArea(20,60);
         transcriptArea.setEditable(false);
 
@@ -838,32 +861,57 @@ public class MainInterface {
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < segments.length(); i++) {
                 JSONObject seg = segments.getJSONObject(i);
-                String text = seg.getString("text").trim();
-                if (text.isEmpty()) {
-                    continue;
-                }
                 String spk = seg.getString("speaker");
                 String name = fields.get(spk).getText();
                 double start = seg.getDouble("start");
                 double end = seg.getDouble("end");
+                String text = segmentTextFields.get(i).getText().trim();
+                if (text.isEmpty()) continue;
                 sb.append(String.format("[%.2f-%.2f] %s: %s%n", start, end, name, text));
             }
             transcriptArea.setText(sb.toString());
+
+            // Update labels next to each text field
+            for (int i = 0; i < segments.length(); i++) {
+                JSONObject seg = segments.getJSONObject(i);
+                String spk = seg.getString("speaker");
+                String name = fields.get(spk).getText();
+                double start = seg.getDouble("start");
+                double end = seg.getDouble("end");
+                segmentLabels.get(i).setText(String.format("[%.2f-%.2f] %s:", start, end, name));
+            }
         };
 
-        fields.values().forEach(f -> f.getDocument().addDocumentListener(new javax.swing.event.DocumentListener(){public void insertUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}public void removeUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}public void changedUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}}));
+        for (JTextField tf : segmentTextFields) {
+            tf.getDocument().addDocumentListener(new javax.swing.event.DocumentListener(){
+                public void insertUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}
+                public void removeUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}
+                public void changedUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}
+            });
+        }
+
+        // Update transcript when speaker names change
+        fields.forEach((spk, f) -> f.getDocument().addDocumentListener(new javax.swing.event.DocumentListener(){public void insertUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}public void removeUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}public void changedUpdate(javax.swing.event.DocumentEvent e){updateArea.run();}}));
 
         updateArea.run();
 
         JButton confirm = new JButton("Save Transcript");
         confirm.addActionListener(e -> dialog.dispose());
 
+        JPanel centerPanel = new JPanel();
+        centerPanel.setLayout(new BoxLayout(centerPanel, BoxLayout.Y_AXIS));
+        centerPanel.add(new JScrollPane(editPanel));
+        centerPanel.add(Box.createVerticalStrut(10));
+        centerPanel.add(new JScrollPane(transcriptArea));
+
         dialog.add(namesPanel, BorderLayout.NORTH);
-        dialog.add(new JScrollPane(transcriptArea), BorderLayout.CENTER);
+        dialog.add(centerPanel, BorderLayout.CENTER);
         dialog.add(confirm, BorderLayout.SOUTH);
         dialog.pack();
         dialog.setLocationRelativeTo(frame);
         dialog.setVisible(true);
+
+        updateArea.run();
 
         return transcriptArea.getText();
     }
