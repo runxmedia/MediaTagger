@@ -11,6 +11,7 @@ import java.net.URL;
 import java.nio.file.*;
 import java.util.*;
 import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.StringSelection;
 import java.awt.dnd.DnDConstants;
 import java.awt.dnd.DropTarget;
 import java.awt.dnd.DropTargetAdapter;
@@ -517,6 +518,9 @@ public class MainInterface {
                 }
             }
         }
+        if (chk_text_to_speech.isSelected() && !transcripts.isEmpty()) {
+            runTranscriptUploadWizard(transcripts);
+        }
         runFinalEmbeddingProcess(confirmedTags);
     }
 
@@ -915,6 +919,80 @@ public class MainInterface {
         updateLabels.run();
 
         return finalTranscript[0];
+    }
+
+    private void runTranscriptUploadWizard(Map<File, String> transcripts) {
+        if (transcripts.isEmpty()) return;
+
+        List<Map.Entry<File, String>> items = new ArrayList<>(transcripts.entrySet());
+        JDialog dialog = new JDialog(frame, "Transcript Upload", true);
+        if (this.appIcon != null) dialog.setIconImage(this.appIcon);
+        final boolean[] docOpened = {false};
+
+        CardLayout cardLayout = new CardLayout();
+        JPanel cardPanel = new JPanel(cardLayout);
+
+        JPanel intro = new JPanel(new BorderLayout(10,10));
+        intro.add(new JLabel("<html>The transcript for each video has been saved as a text file next to the original video.\n" +
+                "These transcripts need to be copied into the Sunrun Video Team Chat bot's source data.</html>"), BorderLayout.CENTER);
+        JButton introNext = new JButton("Next");
+        intro.add(introNext, BorderLayout.SOUTH);
+        cardPanel.add(intro, "intro");
+
+        for (int i = 0; i < items.size(); i++) {
+            Map.Entry<File, String> entry = items.get(i);
+            File vid = entry.getKey();
+            String text = entry.getValue();
+
+            JPanel panel = new JPanel(new BorderLayout(10,10));
+            panel.add(new JLabel("<html><b>" + vid.getName() + "</b><br>" +
+                    "Copy the transcript below, create a new tab in the document, and paste it there.</html>"), BorderLayout.NORTH);
+
+            JTextArea area = new JTextArea(text, 15, 50);
+            area.setLineWrap(true);
+            area.setWrapStyleWord(true);
+            area.setEditable(false);
+            panel.add(new JScrollPane(area), BorderLayout.CENTER);
+
+            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+            JButton copyBtn = new JButton("Copy Transcript");
+            JButton nextBtn = new JButton(i == items.size() - 1 ? "Finish" : "Next");
+            buttons.add(copyBtn);
+            buttons.add(nextBtn);
+            panel.add(buttons, BorderLayout.SOUTH);
+
+            copyBtn.addActionListener(e -> {
+                StringSelection sel = new StringSelection(area.getText());
+                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(sel, null);
+            });
+
+            int idx = i;
+            nextBtn.addActionListener(e -> {
+                if (idx == items.size() - 1) dialog.dispose();
+                else cardLayout.next(cardPanel);
+            });
+
+            cardPanel.add(panel, "vid" + i);
+        }
+
+        introNext.addActionListener(e -> {
+            cardLayout.next(cardPanel);
+            if (!docOpened[0]) {
+                try {
+                    if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                        Desktop.getDesktop().browse(new URI("https://docs.google.com/document/d/1B1PJN81zuECiyugiQZPydK08x5kUymXjKFcwmges2vA/edit?tab=t.ql6mybl8mvmh"));
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+                docOpened[0] = true;
+            }
+        });
+
+        dialog.setContentPane(cardPanel);
+        dialog.pack();
+        dialog.setLocationRelativeTo(frame);
+        dialog.setVisible(true);
     }
 
     private void runFinalEmbeddingProcess(Map<File, List<String>> allFileTags) {
