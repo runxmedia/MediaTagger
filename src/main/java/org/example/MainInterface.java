@@ -497,6 +497,19 @@ public class MainInterface {
                     if (pn != null) {
                         bw.write("Project Name:\n");
                         bw.write(pn + "\n\n");
+
+                        int year = (int) combo_year.getSelectedItem();
+                        int month = monthCodeToNumber((String) combo_month.getSelectedItem());
+                        String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
+                        String projectLocation;
+                        if (rdo_finished.isSelected()) {
+                            projectLocation = "RunMedia/Production/Projects/" + year + "/" + folderName;
+                        } else {
+                            projectLocation = "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
+                        }
+
+                        bw.write("Project Location:\n");
+                        bw.write(projectLocation + "\n\n");
                     }
                     bw.write(finalText);
                 } catch (IOException ex) {
