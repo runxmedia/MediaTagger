@@ -491,28 +491,22 @@ public class MainInterface {
             if (chk_text_to_speech.isSelected() && transcripts.containsKey(file)) {
                 FaceData fd = faceDataMap.get(file);
                 String finalText = showTranscriptReviewDialog(file, transcripts.get(file), fd);
-                transcripts.put(file, finalText);
+                String pn = projectNames.get(file);
+                String finalOutput = finalText;
+                if (pn != null) {
+                    int year = (int) combo_year.getSelectedItem();
+                    int month = monthCodeToNumber((String) combo_month.getSelectedItem());
+                    String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
+                    String projectLocation = rdo_finished.isSelected()
+                            ? "RunMedia/Production/Projects/" + year + "/" + folderName
+                            : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
+                    finalOutput = "Project Name:\n" + pn + "\n\n" +
+                            "Project Location:\n" + projectLocation + "\n\n" + finalText;
+                }
+                transcripts.put(file, finalOutput);
                 File txtFile = new File(file.getParent(), file.getName().replaceFirst("\\.[^.]+$", ".txt"));
                 try (BufferedWriter bw = Files.newBufferedWriter(txtFile.toPath())) {
-                    String pn = projectNames.get(file);
-                    if (pn != null) {
-                        bw.write("Project Name:\n");
-                        bw.write(pn + "\n\n");
-
-                        int year = (int) combo_year.getSelectedItem();
-                        int month = monthCodeToNumber((String) combo_month.getSelectedItem());
-                        String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
-                        String projectLocation;
-                        if (rdo_finished.isSelected()) {
-                            projectLocation = "RunMedia/Production/Projects/" + year + "/" + folderName;
-                        } else {
-                            projectLocation = "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
-                        }
-
-                        bw.write("Project Location:\n");
-                        bw.write(projectLocation + "\n\n");
-                    }
-                    bw.write(finalText);
+                    bw.write(finalOutput);
                 } catch (IOException ex) {
                     ex.printStackTrace();
                 }
@@ -865,7 +859,8 @@ public class MainInterface {
                 String name = fields.get(spk).getText();
                 double start = seg.getDouble("start");
                 double end = seg.getDouble("end");
-                segmentLabels.get(i).setText(String.format("[%.2f-%.2f] %s:", start, end, name));
+                segmentLabels.get(i).setText(String.format("[%s-%s] %s:",
+                        formatTime(start), formatTime(end), name));
             }
         };
 
@@ -892,7 +887,8 @@ public class MainInterface {
                 double end = seg.getDouble("end");
                 String text = segmentTextFields.get(i).getText().trim();
                 if (text.isEmpty()) continue;
-                sb.append(String.format("[%.2f-%.2f] %s: %s%n", start, end, name, text));
+                sb.append(String.format("[%s-%s] %s: %s%n",
+                        formatTime(start), formatTime(end), name, text));
             }
             return sb.toString();
         };
@@ -1285,6 +1281,15 @@ public class MainInterface {
 
     private int monthCodeToNumber(String monthCode) {
         return List.of("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec").indexOf(monthCode) + 1;
+    }
+
+    private static String formatTime(double seconds) {
+        int hrs = (int) (seconds / 3600);
+        int mins = (int) ((seconds % 3600) / 60);
+        double secFrac = seconds % 60;
+        int secs = (int) secFrac;
+        int hundredths = (int) Math.round((secFrac - secs) * 100);
+        return String.format("%02d:%02d:%02d.%02d", hrs, mins, secs, hundredths);
     }
 
     private static class Location {
