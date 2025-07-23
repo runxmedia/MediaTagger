@@ -165,6 +165,7 @@ public class MainInterface {
         frame.setLocationRelativeTo(null);
         frame.setSize(800, 800);
         frame.setVisible(true);
+        showWhatsNewIfNeeded();
     }
 
     // --- ADDED: Method to load the Hugging Face token from the resource file ---
@@ -1290,6 +1291,38 @@ public class MainInterface {
         int secs = (int) secFrac;
         int hundredths = (int) Math.round((secFrac - secs) * 100);
         return String.format("%02d:%02d:%02d.%02d", hrs, mins, secs, hundredths);
+    }
+
+    private void showWhatsNewIfNeeded() {
+        String versionNumber = VERSION.split(",")[0];
+        Path versionFile = resourceDir.resolve("last_version.txt");
+        String storedVersion = "";
+        if (Files.exists(versionFile)) {
+            try {
+                storedVersion = Files.readString(versionFile).trim();
+            } catch (IOException ignored) { }
+        }
+
+        if (!versionNumber.equals(storedVersion)) {
+            showWhatsNewDialog();
+            try {
+                Files.writeString(versionFile, versionNumber);
+            } catch (IOException ignored) { }
+        }
+    }
+
+    private void showWhatsNewDialog() {
+        try (InputStream in = getClass().getClassLoader().getResourceAsStream("whats_new.html")) {
+            if (in == null) return;
+            String html = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            JEditorPane pane = new JEditorPane("text/html", html);
+            pane.setEditable(false);
+            JScrollPane scroll = new JScrollPane(pane);
+            scroll.setPreferredSize(new Dimension(800, 700));
+            JOptionPane.showMessageDialog(frame, scroll, "What's New", JOptionPane.INFORMATION_MESSAGE, new ImageIcon(appIcon));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     private static class Location {
