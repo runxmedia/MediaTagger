@@ -502,9 +502,6 @@ public class MainInterface {
         txt_search_location.setEnabled(false);
         btn_search_location.setEnabled(false);
         lst_search_location_results.setEnabled(false);
-//        combo_month.setEnabled(false);
-//        combo_day.setEnabled(false);
-//        combo_year.setEnabled(false);
         chk_copy_files.setEnabled(false);
         rdo_finished.setEnabled(false);
         rdo_broll.setEnabled(false);
