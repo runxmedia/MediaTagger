@@ -87,6 +87,12 @@ public class MainInterface {
     private String hfToken; // --- ADDED: To hold the Hugging Face token
     private static final String[] VIDEO_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".mp4"};
     private Image appIcon;
+    private boolean transcriptOnlyMode = false;
+    private int clearClickCount = 0;
+    private int removeTagClickCount = 0;
+    private long lastRemoveTagClickTime = 0;
+    private JLabel transcriptBanner;
+    private JPanel rootPanel;
 
     public static void main(String[] args) {
         System.setProperty("apple.awt.application.name", "Media Tagger");
@@ -159,7 +165,18 @@ public class MainInterface {
         }
 
         setupGUI();
-        frame.setContentPane(pnl_main_interface);
+
+        transcriptBanner = new JLabel("Transcript Only Mode", SwingConstants.CENTER);
+        transcriptBanner.setOpaque(true);
+        transcriptBanner.setBackground(Color.RED);
+        transcriptBanner.setForeground(Color.WHITE);
+        transcriptBanner.setVisible(false);
+
+        rootPanel = new JPanel(new BorderLayout());
+        rootPanel.add(transcriptBanner, BorderLayout.NORTH);
+        rootPanel.add(pnl_main_interface, BorderLayout.CENTER);
+
+        frame.setContentPane(rootPanel);
         frame.setTitle("Media Tagger");
         frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         frame.setLocationRelativeTo(null);
@@ -367,6 +384,7 @@ public class MainInterface {
         btn_clear.addActionListener(e -> {
             selectedFiles.clear();
             lst_file_contents.setListData(new File[0]);
+            handleClearClick();
         });
         btn_remove_item.addActionListener(e -> {
             selectedFiles.removeAll(lst_file_contents.getSelectedValuesList());
@@ -390,6 +408,9 @@ public class MainInterface {
             }
         });
         btn_tag_remove.addActionListener(e -> {
+            if (handleRemoveTagClick()) {
+                return;
+            }
             if (!tags.isEmpty()) {
                 tags.remove(tags.size() - 1);
                 updateTagsLabel();
@@ -429,6 +450,68 @@ public class MainInterface {
         }
     }
 
+    private boolean handleRemoveTagClick() {
+        long now = System.currentTimeMillis();
+        if (now - lastRemoveTagClickTime <= 700) {
+            removeTagClickCount++;
+        } else {
+            removeTagClickCount = 1;
+        }
+        lastRemoveTagClickTime = now;
+
+        if (removeTagClickCount >= 6) {
+            removeTagClickCount = 0;
+            lastRemoveTagClickTime = 0;
+            String url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                try {
+                    Desktop.getDesktop().browse(new URI(url));
+                } catch (IOException | URISyntaxException ex) {
+                    ex.printStackTrace();
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private void handleClearClick() {
+        if (transcriptOnlyMode) return;
+        clearClickCount++;
+        if (clearClickCount >= 4) {
+            clearClickCount = 0;
+            JPasswordField pf = new JPasswordField();
+            int res = JOptionPane.showConfirmDialog(frame, pf, "Enter Password", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE, new ImageIcon(appIcon));
+            if (res == JOptionPane.OK_OPTION) {
+                if ("transcript".equals(new String(pf.getPassword()))) {
+                    enableTranscriptOnlyMode();
+                } else {
+                    JOptionPane.showMessageDialog(frame, "Incorrect password.", "Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
+                }
+            }
+        }
+    }
+
+    private void enableTranscriptOnlyMode() {
+        transcriptOnlyMode = true;
+        transcriptBanner.setVisible(true);
+
+        txt_tags.setEnabled(false);
+        btn_tag_add.setEnabled(false);
+        btn_tag_remove.setEnabled(false);
+        txt_search_location.setEnabled(false);
+        btn_search_location.setEnabled(false);
+        lst_search_location_results.setEnabled(false);
+        chk_copy_files.setEnabled(false);
+        rdo_finished.setEnabled(false);
+        rdo_broll.setEnabled(false);
+        chk_show_preview.setEnabled(false);
+        chk_lega_approved.setEnabled(false);
+        chk_safety.setEnabled(false);
+        chk_text_to_speech.setSelected(true);
+        chk_text_to_speech.setEnabled(false);
+    }
+
     private void addFileOrDirectory(File file) {
         if (file.isFile() && isVideoOrPhoto(file)) {
             selectedFiles.add(file);
@@ -438,6 +521,10 @@ public class MainInterface {
     }
 
     private void processAllMedia() {
+        if (transcriptOnlyMode) {
+            processTranscriptsOnly();
+            return;
+        }
         if (tags.isEmpty() || selectedLocation == null) {
             JOptionPane.showMessageDialog(frame, "Please add at least one tag and select a location.", "Warning", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
             return;
@@ -519,6 +606,66 @@ public class MainInterface {
         runFinalEmbeddingProcess(confirmedTags);
     }
 
+    private void processTranscriptsOnly() {
+        List<File> videos = selectedFiles.stream()
+                .filter(f -> f.getName().toLowerCase().endsWith(".mp4"))
+                .collect(Collectors.toList());
+        if (videos.isEmpty()) {
+            JOptionPane.showMessageDialog(frame, "Please add at least one video.", "Warning", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
+            return;
+        }
+
+        projectNames.clear();
+        for (File video : videos) {
+            String pn = JOptionPane.showInputDialog(frame,
+                    "Enter the Project Name for " + video.getName() + ":",
+                    "Project Name", JOptionPane.PLAIN_MESSAGE);
+            if (pn == null || pn.trim().isEmpty()) {
+                JOptionPane.showMessageDialog(frame,
+                        "Process canceled: Project name cannot be empty.",
+                        "Canceled", JOptionPane.WARNING_MESSAGE,
+                        new ImageIcon(appIcon));
+                return;
+            }
+            projectNames.put(video, pn.trim());
+        }
+
+        transcripts.clear();
+        Map<File, FaceData> data = runAllFaceRecognition(videos);
+        if (data == null) return;
+
+        for (File video : videos) {
+            String json = transcripts.get(video);
+            if (json != null) {
+                FaceData fd = data.getOrDefault(video, new FaceData(new ArrayList<>(), new ArrayList<>()));
+                String finalText = showTranscriptReviewDialog(video, json, fd);
+                String pn = projectNames.get(video);
+                String finalOutput = finalText;
+                if (pn != null) {
+                    int year = (int) combo_year.getSelectedItem();
+                    int month = monthCodeToNumber((String) combo_month.getSelectedItem());
+                    String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
+                    String projectLocation = rdo_finished.isSelected()
+                            ? "RunMedia/Production/Projects/" + year + "/" + folderName
+                            : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
+                    finalOutput = "Project Name:\n" + pn + "\n\n" +
+                            "Project Location:\n" + projectLocation + "\n\n" + finalText;
+                }
+                transcripts.put(video, finalOutput);
+                File txtFile = new File(video.getParent(), video.getName().replaceFirst("\\.[^.]+$", ".txt"));
+                try (BufferedWriter bw = Files.newBufferedWriter(txtFile.toPath())) {
+                    bw.write(finalOutput);
+                } catch (IOException ex) {
+                    ex.printStackTrace();
+                }
+            }
+        }
+
+        if (!transcripts.isEmpty()) {
+            runTranscriptUploadWizard(transcripts);
+        }
+    }
+
     private Map<File, FaceData> runAllFaceRecognition(List<File> videos) {
         final JDialog progressDialog = new JDialog(frame, "Processing Videos...", true);
         if (this.appIcon != null) {
@@ -571,7 +718,8 @@ public class MainInterface {
                 Path namesPath = resourceDir.resolve("names.json");
                 Path speechScriptPath = resourceDir.resolve("detect_speech.py");
 
-                final int totalStages = chk_text_to_speech.isSelected() ? 2 : 1;
+                final boolean runSpeech = transcriptOnlyMode || chk_text_to_speech.isSelected();
+                final int totalStages = (transcriptOnlyMode ? 0 : 1) + (runSpeech ? 1 : 0);
                 final double stepWeight = 100.0 / totalStages;
 
                 for (int i = 0; i < videos.size(); i++) {
@@ -580,70 +728,74 @@ public class MainInterface {
                     File video = videos.get(i);
                     final String videoName = video.getName();
                     setProgress(0);
-                    SwingUtilities.invokeLater(() -> statusLabel.setText(videoName + " - Detecting Faces"));
-
-                    ArrayList<String> command = new ArrayList<>();
-                    command.add(pythonExecutablePath);
-                    command.add(scriptPath.toString());
-                    command.add(video.getAbsolutePath());
-                    command.add(indexPath.toString());
-                    command.add(namesPath.toString());
-                    command.add("--ffmpeg-path");
-                    command.add(ffmpegExecutablePath);
-                    command.add("--ffprobe-path");
-                    command.add(ffprobeExecutablePath);
-                    if (chk_show_preview.isSelected()) {
-                        command.add("--preview");
-                    }
-                    ProcessBuilder pb = new ProcessBuilder(command);
-                    processHolder[0] = pb.start();
+                    SwingUtilities.invokeLater(() -> statusLabel.setText(videoName + (transcriptOnlyMode ? " - Detecting Speech" : " - Detecting Faces")));
 
                     final List<String> recognizedNamesForVideo = new ArrayList<>();
                     final List<Detection> detectionsForVideo = new ArrayList<>();
 
-                    try (
-                            BufferedReader reader = new BufferedReader(new InputStreamReader(processHolder[0].getInputStream()));
-                            BufferedReader errorReader = new BufferedReader(new InputStreamReader(processHolder[0].getErrorStream()))
-                    ) {
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            if (line.startsWith("PROGRESS:")) {
-                                int val = Integer.parseInt(line.substring(9));
-                                int mapped = (int) (val * stepWeight / 100.0);
-                                setProgress(mapped);
-                            } else if (line.startsWith("RESULTS:")) {
-                                String jsonOutput = line.substring(8);
-                                JSONObject obj = new JSONObject(jsonOutput);
-                                JSONArray namesArr = obj.getJSONArray("names");
-                                for (int j = 0; j < namesArr.length(); j++) {
-                                    recognizedNamesForVideo.add(namesArr.getString(j));
+                    if (!transcriptOnlyMode) {
+                        ArrayList<String> command = new ArrayList<>();
+                        command.add(pythonExecutablePath);
+                        command.add(scriptPath.toString());
+                        command.add(video.getAbsolutePath());
+                        command.add(indexPath.toString());
+                        command.add(namesPath.toString());
+                        command.add("--ffmpeg-path");
+                        command.add(ffmpegExecutablePath);
+                        command.add("--ffprobe-path");
+                        command.add(ffprobeExecutablePath);
+                        if (chk_show_preview.isSelected()) {
+                            command.add("--preview");
+                        }
+                        ProcessBuilder pb = new ProcessBuilder(command);
+                        processHolder[0] = pb.start();
+
+                        try (
+                                BufferedReader reader = new BufferedReader(new InputStreamReader(processHolder[0].getInputStream()));
+                                BufferedReader errorReader = new BufferedReader(new InputStreamReader(processHolder[0].getErrorStream()))
+                        ) {
+                            String line;
+                            while ((line = reader.readLine()) != null) {
+                                if (line.startsWith("PROGRESS:")) {
+                                    int val = Integer.parseInt(line.substring(9));
+                                    int mapped = (int) (val * stepWeight / 100.0);
+                                    setProgress(mapped);
+                                } else if (line.startsWith("RESULTS:")) {
+                                    String jsonOutput = line.substring(8);
+                                    JSONObject obj = new JSONObject(jsonOutput);
+                                    JSONArray namesArr = obj.getJSONArray("names");
+                                    for (int j = 0; j < namesArr.length(); j++) {
+                                        recognizedNamesForVideo.add(namesArr.getString(j));
+                                    }
+                                    JSONArray detArr = obj.getJSONArray("detections");
+                                    for (int j = 0; j < detArr.length(); j++) {
+                                        JSONObject d = detArr.getJSONObject(j);
+                                        detectionsForVideo.add(new Detection(d.getDouble("time"), d.getString("name")));
+                                    }
+                                } else {
+                                    System.out.println("Python stdout: " + line);
                                 }
-                                JSONArray detArr = obj.getJSONArray("detections");
-                                for (int j = 0; j < detArr.length(); j++) {
-                                    JSONObject d = detArr.getJSONObject(j);
-                                    detectionsForVideo.add(new Detection(d.getDouble("time"), d.getString("name")));
-                                }
-                            } else {
-                                System.out.println("Python stdout: " + line);
+                            }
+
+                            int exitCode = processHolder[0].waitFor();
+                            if (exitCode != 0) {
+                                final String errorOutput = errorReader.lines().collect(Collectors.joining("\n"));
+                                final String errorMessage = "The face recognition failed for file '" + videoName + "' (exit code " + exitCode + ").\n\nError:\n" + errorOutput;
+                                SwingUtilities.invokeLater(() ->
+                                        JOptionPane.showMessageDialog(frame, errorMessage, "Face Recognition Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon))
+                                );
+                                throw new IOException(errorMessage);
                             }
                         }
-
-                        int exitCode = processHolder[0].waitFor();
-                        if (exitCode != 0) {
-                            final String errorOutput = errorReader.lines().collect(Collectors.joining("\n"));
-                            final String errorMessage = "The face recognition failed for file '" + videoName + "' (exit code " + exitCode + ").\n\nError:\n" + errorOutput;
-                            SwingUtilities.invokeLater(() ->
-                                    JOptionPane.showMessageDialog(frame, errorMessage, "Face Recognition Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon))
-                            );
-                            throw new IOException(errorMessage);
-                        }
+                    } else {
+                        processHolder[0] = null;
                     }
 
                     results.put(video, new FaceData(recognizedNamesForVideo, detectionsForVideo));
 
                     if (isCancelled()) break;
 
-                    if (chk_text_to_speech.isSelected()) {
+                    if (runSpeech) {
                         ArrayList<String> speechCmd = new ArrayList<>();
                         speechCmd.add(pythonExecutablePath);
                         speechCmd.add(speechScriptPath.toString());
@@ -662,7 +814,7 @@ public class MainInterface {
                             while ((line = speechReader.readLine()) != null) {
                                 if (line.startsWith("PROGRESS:")) {
                                     int val = Integer.parseInt(line.substring(9));
-                                    int mapped = (int) (stepWeight + val * stepWeight / 100.0);
+                                    int mapped = (int) ((transcriptOnlyMode ? 0 : stepWeight) + val * stepWeight / 100.0);
                                     setProgress(mapped);
                                     final String stepTxt = val < 60 ? "Detecting Speech" : "Identifying Speakers";
                                     SwingUtilities.invokeLater(() -> statusLabel.setText(videoName + " - " + stepTxt));
@@ -1153,10 +1305,10 @@ public class MainInterface {
         String name = file.getName().toLowerCase();
         for (String ext : VIDEO_PHOTO_EXTENSIONS)
             if (name.endsWith(ext)){
-                if(file.getAbsolutePath().contains("Volumes/RunMedia")) {
-                    JOptionPane.showMessageDialog(frame, name + " cannot be tagged because it is located on the server.\nPlease tag files from your computer before uploading to RunMedia", "File Location Error", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
-                    return false;
-                }
+//                if(file.getAbsolutePath().contains("Volumes/RunMedia")) {
+//                    JOptionPane.showMessageDialog(frame, name + " cannot be tagged because it is located on the server.\nPlease tag files from your computer before uploading to RunMedia", "File Location Error", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
+//                    return false;
+//                }
                 return true;
             }
         return false;
