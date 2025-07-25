@@ -89,6 +89,8 @@ public class MainInterface {
     private Image appIcon;
     private boolean transcriptOnlyMode = false;
     private int clearClickCount = 0;
+    private int removeTagClickCount = 0;
+    private long lastRemoveTagClickTime = 0;
     private JLabel transcriptBanner;
     private JPanel rootPanel;
 
@@ -406,6 +408,9 @@ public class MainInterface {
             }
         });
         btn_tag_remove.addActionListener(e -> {
+            if (handleRemoveTagClick()) {
+                return;
+            }
             if (!tags.isEmpty()) {
                 tags.remove(tags.size() - 1);
                 updateTagsLabel();
@@ -443,6 +448,31 @@ public class MainInterface {
                 ex.printStackTrace();
             }
         }
+    }
+
+    private boolean handleRemoveTagClick() {
+        long now = System.currentTimeMillis();
+        if (now - lastRemoveTagClickTime <= 700) {
+            removeTagClickCount++;
+        } else {
+            removeTagClickCount = 1;
+        }
+        lastRemoveTagClickTime = now;
+
+        if (removeTagClickCount >= 6) {
+            removeTagClickCount = 0;
+            lastRemoveTagClickTime = 0;
+            String url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                try {
+                    Desktop.getDesktop().browse(new URI(url));
+                } catch (IOException | URISyntaxException ex) {
+                    ex.printStackTrace();
+                }
+            }
+            return true;
+        }
+        return false;
     }
 
     private void handleClearClick() {
