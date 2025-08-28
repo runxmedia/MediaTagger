@@ -591,7 +591,7 @@ public class MainInterface {
                     finalOutput = "Project Name:\n" + pn + "\n\n" +
                             "Project Location:\n" + projectLocation + "\n\n" + finalText;
                 }
-                transcripts.put(file, finalOutput);
+                transcripts.put(file, finalText);
                 File txtFile = new File(file.getParent(), file.getName().replaceFirst("\\.[^.]+$", ".txt"));
                 try (BufferedWriter bw = Files.newBufferedWriter(txtFile.toPath())) {
                     bw.write(finalOutput);
@@ -599,9 +599,6 @@ public class MainInterface {
                     ex.printStackTrace();
                 }
             }
-        }
-        if (chk_text_to_speech.isSelected() && !transcripts.isEmpty()) {
-            runTranscriptUploadWizard(transcripts);
         }
         runFinalEmbeddingProcess(confirmedTags);
     }
@@ -651,7 +648,7 @@ public class MainInterface {
                     finalOutput = "Project Name:\n" + pn + "\n\n" +
                             "Project Location:\n" + projectLocation + "\n\n" + finalText;
                 }
-                transcripts.put(video, finalOutput);
+                transcripts.put(video, finalText);
                 File txtFile = new File(video.getParent(), video.getName().replaceFirst("\\.[^.]+$", ".txt"));
                 try (BufferedWriter bw = Files.newBufferedWriter(txtFile.toPath())) {
                     bw.write(finalOutput);
@@ -659,10 +656,6 @@ public class MainInterface {
                     ex.printStackTrace();
                 }
             }
-        }
-
-        if (!transcripts.isEmpty()) {
-            runTranscriptUploadWizard(transcripts);
         }
     }
 
@@ -1070,80 +1063,6 @@ public class MainInterface {
         return finalTranscript[0];
     }
 
-    private void runTranscriptUploadWizard(Map<File, String> transcripts) {
-        if (transcripts.isEmpty()) return;
-
-        List<Map.Entry<File, String>> items = new ArrayList<>(transcripts.entrySet());
-        JDialog dialog = new JDialog(frame, "Transcript Upload", true);
-        if (this.appIcon != null) dialog.setIconImage(this.appIcon);
-        final boolean[] docOpened = {false};
-
-        CardLayout cardLayout = new CardLayout();
-        JPanel cardPanel = new JPanel(cardLayout);
-
-        JPanel intro = new JPanel(new BorderLayout(10,10));
-        intro.add(new JLabel("<html>The transcript for each video has been saved as a text file next to the original video.\n" +
-                "These transcripts need to be copied into the Sunrun Video Team Chat bot's source data.</html>"), BorderLayout.CENTER);
-        JButton introNext = new JButton("Next");
-        intro.add(introNext, BorderLayout.SOUTH);
-        cardPanel.add(intro, "intro");
-
-        for (int i = 0; i < items.size(); i++) {
-            Map.Entry<File, String> entry = items.get(i);
-            File vid = entry.getKey();
-            String text = entry.getValue();
-
-            JPanel panel = new JPanel(new BorderLayout(10,10));
-            panel.add(new JLabel("<html><b>" + vid.getName() + "</b><br>" +
-                    "Copy the transcript below, create a new tab in the document, and paste it there.</html>"), BorderLayout.NORTH);
-
-            JTextArea area = new JTextArea(text, 15, 50);
-            area.setLineWrap(true);
-            area.setWrapStyleWord(true);
-            area.setEditable(false);
-            panel.add(new JScrollPane(area), BorderLayout.CENTER);
-
-            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-            JButton copyBtn = new JButton("Copy Transcript");
-            JButton nextBtn = new JButton(i == items.size() - 1 ? "Finish" : "Next");
-            buttons.add(copyBtn);
-            buttons.add(nextBtn);
-            panel.add(buttons, BorderLayout.SOUTH);
-
-            copyBtn.addActionListener(e -> {
-                StringSelection sel = new StringSelection(area.getText());
-                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(sel, null);
-            });
-
-            int idx = i;
-            nextBtn.addActionListener(e -> {
-                if (idx == items.size() - 1) dialog.dispose();
-                else cardLayout.next(cardPanel);
-            });
-
-            cardPanel.add(panel, "vid" + i);
-        }
-
-        introNext.addActionListener(e -> {
-            cardLayout.next(cardPanel);
-            if (!docOpened[0]) {
-                try {
-                    if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-                        Desktop.getDesktop().browse(new URI("https://docs.google.com/document/d/1B1PJN81zuECiyugiQZPydK08x5kUymXjKFcwmges2vA/edit?tab=t.ql6mybl8mvmh"));
-                    }
-                } catch (Exception ex) {
-                    ex.printStackTrace();
-                }
-                docOpened[0] = true;
-            }
-        });
-
-        dialog.setContentPane(cardPanel);
-        dialog.pack();
-        dialog.setLocationRelativeTo(frame);
-        dialog.setVisible(true);
-    }
-
     private void runFinalEmbeddingProcess(Map<File, List<String>> allFileTags) {
         JDialog progressDialog = new JDialog(frame, "Embedding Metadata...", true);
         if (this.appIcon != null) {
@@ -1166,7 +1085,31 @@ public class MainInterface {
                 for (Map.Entry<File, List<String>> entry : allFileTags.entrySet()) {
                     File file = entry.getKey();
                     List<String> peopleForFile = entry.getValue();
-                    String description = "Tags: " + String.join(", ", tags) + " - People: " + String.join(", ", peopleForFile);
+
+                    String tagsStr = String.join(", ", tags);
+                    String peopleStr = String.join(", ", peopleForFile);
+
+                    String pn = projectNames.getOrDefault(file, "");
+                    String projectLocation = "";
+                    if (!pn.isEmpty()) {
+                        int year = (int) combo_year.getSelectedItem();
+                        int month = monthCodeToNumber((String) combo_month.getSelectedItem());
+                        String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
+                        projectLocation = rdo_finished.isSelected()
+                                ? "RunMedia/Production/Projects/" + year + "/" + folderName
+                                : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
+                    }
+
+                    String transcript = transcripts.getOrDefault(file, "");
+
+                    StringBuilder descBuilder = new StringBuilder();
+                    descBuilder.append("Tags: ").append(tagsStr).append("\n");
+                    descBuilder.append("People: ").append(peopleStr).append("\n");
+                    descBuilder.append("Project Name: ").append(pn).append("\n");
+                    descBuilder.append("Project Location: ").append(projectLocation).append("\n");
+                    descBuilder.append("Transcript:\n").append(transcript);
+                    String description = descBuilder.toString();
+
                     try {
                         if (file.getName().toLowerCase().endsWith(".mp4")) {
                             embedVideoMetadata(file, description, selectedLocation, selectedDate);
