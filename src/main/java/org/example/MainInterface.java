@@ -650,12 +650,6 @@ public class MainInterface {
                             "Project Location:\n" + projectLocation + "\n\n" + finalText;
                 }
                 transcripts.put(file, finalText);
-                File txtFile = new File(file.getParent(), file.getName().replaceFirst("\\.[^.]+$", ".txt"));
-                try (BufferedWriter bw = Files.newBufferedWriter(txtFile.toPath())) {
-                    bw.write(finalOutput);
-                } catch (IOException ex) {
-                    ex.printStackTrace();
-                }
             }
         }
         runFinalEmbeddingProcess(confirmedTags);
@@ -707,12 +701,6 @@ public class MainInterface {
                             "Project Location:\n" + projectLocation + "\n\n" + finalText;
                 }
                 transcripts.put(video, finalText);
-                File txtFile = new File(video.getParent(), video.getName().replaceFirst("\\.[^.]+$", ".txt"));
-                try (BufferedWriter bw = Files.newBufferedWriter(txtFile.toPath())) {
-                    bw.write(finalOutput);
-                } catch (IOException ex) {
-                    ex.printStackTrace();
-                }
             }
         }
     }
@@ -1306,10 +1294,10 @@ public class MainInterface {
         String name = file.getName().toLowerCase();
         for (String ext : VIDEO_PHOTO_EXTENSIONS)
             if (name.endsWith(ext)){
-//                if(file.getAbsolutePath().contains("Volumes/RunMedia")) {
-//                    JOptionPane.showMessageDialog(frame, name + " cannot be tagged because it is located on the server.\nPlease tag files from your computer before uploading to RunMedia", "File Location Error", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
-//                    return false;
-//                }
+                if(file.getAbsolutePath().contains("Volumes/RunMedia")) {
+                    JOptionPane.showMessageDialog(frame, name + " cannot be tagged because it is located on the server.\nPlease tag files from your computer before uploading to RunMedia", "File Location Error", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
+                    return false;
+                }
                 return true;
             }
         return false;
