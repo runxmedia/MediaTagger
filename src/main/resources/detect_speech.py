@@ -7,6 +7,9 @@ from pyannote.audio import Pipeline
 import traceback
 
 def transcribe_video(path, hf_token):
+    ffmpeg_paths = ["/opt/homebrew/bin", "/usr/local/bin"]
+    os.environ["PATH"] = os.environ["PATH"] + os.pathsep + os.pathsep.join(ffmpeg_paths)
+
     # Prefer GPU acceleration when available
     if torch.cuda.is_available():
         device = "cuda"
@@ -18,12 +21,17 @@ def transcribe_video(path, hf_token):
     # --- START OF FIX FOR LibsndfileError ---
     # 1. Load the audio waveform using whisper, which can handle video files.
     #    This returns a NumPy array.
+    print("Loading audio waveform...")
     audio_waveform = whisper.load_audio(path)
+    print("Finished loading audio waveform.")
     # --- END OF FIX ---
 
     print("PROGRESS:10", flush=True)
 
+    print("Loading whisper model...")
     model = whisper.load_model("large-v2", device="cpu")
+    print("Finished loading whisper model.")
+
 
     alignment_heads = model.alignment_heads
     model.alignment_heads = None
@@ -41,13 +49,21 @@ def transcribe_video(path, hf_token):
     whisper.timing.dtw = patched_dtw
 
     # Transcribe using the loaded audio waveform
-    result = model.transcribe(audio_waveform, word_timestamps=True)
+    print("Starting transcription...")
+    # --- START OF FIX for ValueError with NaN on MPS ---
+    # Disable fp16 to prevent numerical instability on Apple Silicon devices.
+    result = model.transcribe(audio_waveform, word_timestamps=True, fp16=False)
+    # --- END OF FIX ---
+    print("Finished transcription.")
     print("PROGRESS:60", flush=True)
 
+    print("Loading diarization model...")
     diarize_model = Pipeline.from_pretrained(
         "pyannote/speaker-diarization-3.1", use_auth_token=hf_token
     )
     diarize_model.to(torch.device(device))
+    print("Finished loading diarization model.")
+
 
     # --- START OF FIX FOR LibsndfileError ---
     # 2. Prepare the audio for pyannote. It expects a dictionary containing a
@@ -58,13 +74,19 @@ def transcribe_video(path, hf_token):
     }
 
     # 3. Pass the in-memory audio data to the diarization model.
+    print("Starting diarization...")
     diarization = diarize_model(audio_for_diarization)
+    print("Finished diarization.")
     # --- END OF FIX ---
 
     segments = []
+    print("Processing diarization segments...")
     for turn, _, speaker in diarization.itertracks(yield_label=True):
         segments.append({"start": turn.start, "end": turn.end, "speaker": speaker})
+    print("Finished processing diarization segments.")
 
+
+    print("Assigning speakers to words...")
     for seg in result.get("segments", []):
         word_speakers = []
         for word in seg.get("words", []):
@@ -78,6 +100,7 @@ def transcribe_video(path, hf_token):
                 word_speakers.append(spk)
         if word_speakers:
             seg["speaker"] = max(set(word_speakers), key=word_speakers.count)
+    print("Finished assigning speakers to words.")
 
     # Remove any segments that have no text after trimming
     filtered = [s for s in result.get("segments", []) if s.get("text", "").strip()]
@@ -100,7 +123,7 @@ def main():
         print("RESULTS:" + json.dumps(result), flush=True)
     except Exception:
         log_dir = os.path.expanduser("~/Desktop")
-        os.makedirs(log_dir, exist_ok=True)
+        os.makedirs(log_dir, exist=True)
         log_file = os.path.join(log_dir, "detect_speech.log")
         with open(log_file, "w") as f:
             traceback.print_exc(file=f)

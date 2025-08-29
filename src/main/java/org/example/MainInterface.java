@@ -1,6 +1,7 @@
 package org.example;
 
 import javax.swing.*;
+import javax.swing.border.Border;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -93,6 +94,8 @@ public class MainInterface {
     private long lastRemoveTagClickTime = 0;
     private JLabel transcriptBanner;
     private JPanel rootPanel;
+    private Border defaultBorder;
+    private Border redBorder = BorderFactory.createLineBorder(Color.RED, 2);
 
     public static void main(String[] args) {
         System.setProperty("apple.awt.application.name", "Media Tagger");
@@ -165,6 +168,7 @@ public class MainInterface {
         }
 
         setupGUI();
+        defaultBorder = txt_tags.getBorder();
 
         transcriptBanner = new JLabel("Transcript Only Mode", SwingConstants.CENTER);
         transcriptBanner.setOpaque(true);
@@ -520,20 +524,74 @@ public class MainInterface {
         }
     }
 
+    private boolean validateInputs() {
+        boolean valid = true;
+        // Reset borders
+        lbl_tags.setBorder(null);
+        lbl_location.setBorder(null);
+        combo_day.setBorder(defaultBorder);
+        combo_month.setBorder(defaultBorder);
+        combo_year.setBorder(defaultBorder);
+
+        if (tags.isEmpty()) {
+            lbl_tags.setBorder(redBorder);
+            valid = false;
+        }
+        if (selectedLocation == null) {
+            lbl_location.setBorder(redBorder);
+            valid = false;
+        }
+
+        Object dayObj = combo_day.getSelectedItem();
+        Object monthObj = combo_month.getSelectedItem();
+        Object yearObj = combo_year.getSelectedItem();
+
+        if (dayObj == null || monthObj == null || yearObj == null || ((String)monthObj).isEmpty()) {
+            combo_day.setBorder(redBorder);
+            combo_month.setBorder(redBorder);
+            combo_year.setBorder(redBorder);
+            valid = false;
+        } else {
+            int day = (int) dayObj;
+            int month = monthCodeToNumber((String) monthObj);
+            int year = (int) yearObj;
+            try {
+                Calendar cal = Calendar.getInstance();
+                cal.setLenient(false);
+                cal.set(year, month - 1, day);
+                cal.getTime(); // Throws exception if date is invalid
+            } catch (Exception e) {
+                combo_day.setBorder(redBorder);
+                combo_month.setBorder(redBorder);
+                combo_year.setBorder(redBorder);
+                valid = false;
+            }
+        }
+
+        if (!valid) {
+            JOptionPane.showMessageDialog(frame,
+                    "Please fill in all the required fields, highlighted in red.",
+                    "Missing Information",
+                    JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
+        }
+
+        return valid;
+    }
+
     private void processAllMedia() {
         if (transcriptOnlyMode) {
             processTranscriptsOnly();
             return;
         }
-        if (tags.isEmpty() || selectedLocation == null) {
-            JOptionPane.showMessageDialog(frame, "Please add at least one tag and select a location.", "Warning", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
+        if (!validateInputs()) {
             return;
         }
+
         if (chk_lega_approved.isSelected()) {
             tags.add("✅ Reviewed by Legal");
         }
         if(chk_safety.isSelected()){
-            tags.add("✅ Reviewed by Safety");
+            tags.add("👷‍♀️Reviewed by Safety");
         }
         List<File> videosToProcess = selectedFiles.stream()
                 .filter(f -> f.getName().toLowerCase().endsWith(".mp4"))
@@ -1286,37 +1344,50 @@ public class MainInterface {
     }
 
     private void initializeDatePicker() {
-        Calendar cal = Calendar.getInstance();
-        int todayDay = cal.get(Calendar.DAY_OF_MONTH);
-        int todayMonth = cal.get(Calendar.MONTH);
-        int todayYear = cal.get(Calendar.YEAR);
+        // --- MODIFIED: Start with blank selections and pre-populate days ---
+        combo_month.addItem("");
         String[] monthCodes = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
         for (String monthCode : monthCodes) combo_month.addItem(monthCode);
-        combo_month.setSelectedIndex(todayMonth);
-        for (int y = todayYear - 10; y <= todayYear + 10; y++) combo_year.addItem(y);
-        combo_year.setSelectedItem(todayYear);
-        updateDayComboBox(todayDay);
-        ActionListener listener = e -> {
-            int previouslySelectedDay = (combo_day.getSelectedItem() != null) ? (int) combo_day.getSelectedItem() : 1;
-            updateDayComboBox(previouslySelectedDay);
-        };
-        combo_month.addActionListener(listener);
-        combo_year.addActionListener(listener);
+        combo_month.setSelectedIndex(0);
+
+        combo_year.addItem(null);
+        int todayYear = Calendar.getInstance().get(Calendar.YEAR);
+        for (int y = todayYear; y >= 1912; y--) combo_year.addItem(y);
+        combo_year.setSelectedItem(null);
+
+        combo_day.addItem(null);
+        for(int i = 1; i <= 31; i++) {
+            combo_day.addItem(i);
+        }
+        combo_day.setSelectedItem(null);
+
+        // --- ADDED: Easter Egg listener for the year combo box ---
+        combo_year.addActionListener(e -> {
+            Object selectedYearObj = combo_year.getSelectedItem();
+            if (selectedYearObj != null) {
+                int selectedYear = (int) selectedYearObj;
+                if (selectedYear >= 1912 && selectedYear <= 1926) {
+                    // Set location to Highclere Castle
+                    selectedLocation = new Location("Highclere Castle, Newbury RG20 9LE, UK", "51.326667", "-1.361389");
+                    lbl_location.setText("<html><div style='width:350px;'>Location: " + selectedLocation.displayName + "</div></html>");
+
+                    // Set Downton Abbey tags
+                    tags.clear();
+                    tags.add("Downton Abbey");
+                    tags.add("Post-Edwardian Era");
+                    tags.add("British Aristocracy");
+                    tags.add("Domestic Service");
+                    tags.add("Social Hierarchy");
+                    updateTagsLabel();
+                }
+            }
+        });
+
     }
 
-    private void updateDayComboBox(int dayToSelect) {
-        int year = (int) combo_year.getSelectedItem();
-        int month = monthCodeToNumber((String) combo_month.getSelectedItem());
-        Calendar cal = Calendar.getInstance();
-        cal.set(Calendar.YEAR, year);
-        cal.set(Calendar.MONTH, month - 1);
-        int maxDays = cal.getActualMaximum(Calendar.DAY_OF_MONTH);
-        Integer currentSelection = dayToSelect;
-        combo_day.removeAllItems();
-        for (int d = 1; d <= maxDays; d++) {
-            combo_day.addItem(d);
-        }
-        combo_day.setSelectedItem(Math.min(currentSelection, maxDays));
+    private void updateDayComboBox(Integer dayToSelect) {
+        // This method is now obsolete with the new validation approach,
+        // but it is kept in case of future changes.
     }
 
     private void embedJpegMetadata(File file, String description, Location location, String date) throws Exception {
