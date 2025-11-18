@@ -1123,18 +1123,19 @@ public class MainInterface {
         progressDialog.setContentPane(panel);
         progressDialog.pack();
         progressDialog.setLocationRelativeTo(frame);
-        SwingWorker<Void, Integer> worker = new SwingWorker<>() {
+
+        SwingWorker<Map<File, Path>, Integer> worker = new SwingWorker<>() {
             @Override
-            protected Void doInBackground() throws Exception {
+            protected Map<File, Path> doInBackground() throws Exception {
+                Map<File, Path> taggedFilesMap = new HashMap<>();
                 int count = 0;
                 String selectedDate = String.format("%04d:%02d:%02d 00:00:00", (int) combo_year.getSelectedItem(), monthCodeToNumber((String) combo_month.getSelectedItem()), (int) combo_day.getSelectedItem());
+
                 for (Map.Entry<File, List<String>> entry : allFileTags.entrySet()) {
                     File file = entry.getKey();
                     List<String> peopleForFile = entry.getValue();
-
                     String tagsStr = String.join(", ", tags);
                     String peopleStr = String.join(", ", peopleForFile);
-
                     String pn = projectNames.getOrDefault(file, "");
                     String projectLocation = "";
                     if (!pn.isEmpty()) {
@@ -1145,9 +1146,7 @@ public class MainInterface {
                                 ? "RunMedia/Production/Projects/" + year + "/" + folderName
                                 : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
                     }
-
                     String transcript = transcripts.getOrDefault(file, "");
-
                     StringBuilder descBuilder = new StringBuilder();
                     descBuilder.append("Tags: ").append(tagsStr).append("\n");
                     descBuilder.append("People: ").append(peopleStr).append("\n");
@@ -1157,17 +1156,21 @@ public class MainInterface {
                     String description = descBuilder.toString();
 
                     try {
+                        Path taggedFile;
                         if (file.getName().toLowerCase().endsWith(".mp4")) {
-                            embedVideoMetadata(file, description, selectedLocation, selectedDate);
+                            taggedFile = embedVideoMetadata(file, description, selectedLocation, selectedDate);
                         } else {
-                            embedJpegMetadata(file, description, selectedLocation, selectedDate);
+                            taggedFile = embedJpegMetadata(file, description, selectedLocation, selectedDate);
                         }
+                        taggedFilesMap.put(file, taggedFile);
                     } catch (Exception e) {
                         e.printStackTrace();
+                        // Optionally, clean up any temp file created for this failed item
+                        // For now, we rely on the final cleanup in the next worker
                     }
                     publish(++count);
                 }
-                return null;
+                return taggedFilesMap;
             }
 
             @Override
@@ -1180,15 +1183,12 @@ public class MainInterface {
             @Override
             protected void done() {
                 progressDialog.dispose();
-                if (chk_copy_files.isSelected()) {
-                    copyFilesToServer();
-                } else {
-                    Object[] options = {"Show me where", "Close"};
-                    int choice = JOptionPane.showOptionDialog(frame, "The files have been tagged. You may now copy them into the appropriate X Grid Folder", "Success", JOptionPane.DEFAULT_OPTION, JOptionPane.INFORMATION_MESSAGE, new ImageIcon(appIcon), options, options[1]);
-                    if (choice == 0) {
-                        openHelpLink();
-                    }
-                    btn_clear.doClick();
+                try {
+                    Map<File, Path> taggedFilesMap = get();
+                    finishProcessing(taggedFilesMap);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    JOptionPane.showMessageDialog(frame, "An error occurred during the embedding process.", "Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
                 }
             }
         };
@@ -1196,88 +1196,152 @@ public class MainInterface {
         progressDialog.setVisible(true);
     }
 
-    private void copyFilesToServer() {
-        Path runMediaPath = Paths.get("/Volumes/RunMedia/");
-        if (!Files.exists(runMediaPath)) {
-            int response = JOptionPane.showConfirmDialog(frame, "RunMedia is not connected.\nWould you like to attempt to connect?", "Server Not Found", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE, new ImageIcon(appIcon));
-            if (response == JOptionPane.YES_OPTION) {
-                try {
-                    Process p = new ProcessBuilder("bash", resourceDir.resolve("mount_server.sh").toString()).start();
-                    p.waitFor();
-                } catch (IOException | InterruptedException e) {
-                    e.printStackTrace();
-                }
-            } else {
-                return;
-            }
-        }
-        if (!Files.exists(runMediaPath)) {
-            JOptionPane.showMessageDialog(frame, "Could not copy files. The Run Media is not mounted.", "Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
+    private void finishProcessing(Map<File, Path> taggedFilesMap) {
+        if (taggedFilesMap == null || taggedFilesMap.isEmpty()) {
+            JOptionPane.showMessageDialog(frame, "No files were tagged.", "Process Complete", JOptionPane.INFORMATION_MESSAGE, new ImageIcon(appIcon));
+            btn_clear.doClick();
             return;
         }
-        int year = (int) combo_year.getSelectedItem();
-        int month = monthCodeToNumber((String) combo_month.getSelectedItem());
-        JDialog copyProgressDialog = new JDialog(frame, "Copying Files...", true);
-        if (this.appIcon != null) {
-            copyProgressDialog.setIconImage(this.appIcon);
-        }
-        JProgressBar copyProgressBar = new JProgressBar(0, 100);
-        JLabel copyLabel = new JLabel("Starting copy...");
-        JPanel panel = new JPanel(new BorderLayout(5, 5));
-        panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-        panel.add(copyLabel, BorderLayout.NORTH);
-        panel.add(copyProgressBar, BorderLayout.CENTER);
-        copyProgressDialog.setContentPane(panel);
-        copyProgressDialog.setSize(400, 200);
-        copyProgressDialog.setLocationRelativeTo(frame);
-        SwingWorker<Void, Long> copyWorker = new SwingWorker<>() {
-            final long totalBytes = selectedFiles.stream().mapToLong(File::length).sum();
-            long copiedBytes = 0;
 
-            @Override
-            protected Void doInBackground() throws Exception {
-                byte[] buffer = new byte[8192];
-                for (File sourceFile : selectedFiles) {
-                    Path destDir;
-                    if (rdo_finished.isSelected()) {
-                        destDir = Paths.get("/Volumes/RunMedia/XGridLibrary/" + year + "/");
-                    } else {
-                        String pn = projectNames.get(sourceFile);
-                        if (pn == null) pn = "";
-                        String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
-                        destDir = Paths.get("/Volumes/RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName + "/");
+        FinalFileCopyWorker copyWorker = new FinalFileCopyWorker(taggedFilesMap);
+        copyWorker.executeAndShow();
+    }
+
+    private class FinalFileCopyWorker extends SwingWorker<Void, Long> {
+        private final Map<File, Path> taggedFilesMap;
+        private final JDialog copyProgressDialog;
+        private final JProgressBar copyProgressBar;
+        private final JLabel copyLabel;
+
+        public FinalFileCopyWorker(Map<File, Path> taggedFilesMap) {
+            this.taggedFilesMap = taggedFilesMap;
+
+            copyProgressDialog = new JDialog(frame, "Copying Files...", true);
+            if (appIcon != null) {
+                copyProgressDialog.setIconImage(appIcon);
+            }
+            copyProgressBar = new JProgressBar(0, 100);
+            copyLabel = new JLabel("Starting copy...");
+            JPanel panel = new JPanel(new BorderLayout(5, 5));
+            panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+            panel.add(copyLabel, BorderLayout.NORTH);
+            panel.add(copyProgressBar, BorderLayout.CENTER);
+            copyProgressDialog.setContentPane(panel);
+            copyProgressDialog.setSize(400, 200);
+            copyProgressDialog.setLocationRelativeTo(frame);
+        }
+
+        @Override
+        protected Void doInBackground() throws Exception {
+            try {
+                boolean uploadToXGrid = chk_copy_files.isSelected();
+                boolean xGridAvailable = uploadToXGrid; // Assume available if checked
+
+                if (uploadToXGrid) {
+                    Path runMediaPath = Paths.get("/Volumes/RunMedia/");
+                    if (!Files.exists(runMediaPath)) {
+                        int response = JOptionPane.showConfirmDialog(frame, "RunMedia is not connected.\nWould you like to attempt to connect?", "Server Not Found", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE, new ImageIcon(appIcon));
+                        if (response == JOptionPane.YES_OPTION) {
+                            try {
+                                Process p = new ProcessBuilder("bash", resourceDir.resolve("mount_server.sh").toString()).start();
+                                p.waitFor();
+                            } catch (IOException | InterruptedException e) {
+                                e.printStackTrace();
+                            }
+                        }
                     }
+                    if (!Files.exists(runMediaPath)) {
+                        xGridAvailable = false;
+                        SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(frame, "Could not connect to X Grid. Files will be saved in their original directory with a 'tagged_' prefix.", "X Grid Unavailable", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon)));
+                    }
+                }
+
+                long totalBytes = taggedFilesMap.values().stream().mapToLong(p -> {
+                    try {
+                        return Files.size(p);
+                    } catch (IOException e) {
+                        return 0;
+                    }
+                }).sum();
+                long copiedBytes = 0;
+                byte[] buffer = new byte[8192];
+
+                for (Map.Entry<File, Path> entry : taggedFilesMap.entrySet()) {
+                    File sourceFile = entry.getKey();
+                    Path tempTaggedFile = entry.getValue();
+                    Path destDir;
+                    String destFileName = sourceFile.getName();
+
+                    if (uploadToXGrid && xGridAvailable) {
+                        int year = (int) combo_year.getSelectedItem();
+                        int month = monthCodeToNumber((String) combo_month.getSelectedItem());
+                        if (rdo_finished.isSelected()) {
+                            destDir = Paths.get("/Volumes/RunMedia/XGridLibrary/" + year + "/");
+                        } else {
+                            String pn = projectNames.get(sourceFile);
+                            if (pn == null) pn = "";
+                            String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
+                            destDir = Paths.get("/Volumes/RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName + "/");
+                        }
+                    } else {
+                        destDir = sourceFile.getParentFile().toPath();
+                        destFileName = "tagged_" + sourceFile.getName();
+                    }
+
                     Files.createDirectories(destDir);
-                    Path destFile = destDir.resolve(sourceFile.getName());
-                    SwingUtilities.invokeLater(() -> copyLabel.setText("Copying: " + sourceFile.getName()));
-                    try (InputStream in = new FileInputStream(sourceFile);
-                         OutputStream out = new FileOutputStream(destFile.toFile())) {
+                    Path destFile = destDir.resolve(destFileName);
+                    final String finalDestName = destFileName;
+                    SwingUtilities.invokeLater(() -> copyLabel.setText("Copying: " + finalDestName));
+
+                    try (InputStream in = Files.newInputStream(tempTaggedFile);
+                         OutputStream out = Files.newOutputStream(destFile, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
                         int bytesRead;
                         while ((bytesRead = in.read(buffer)) != -1) {
                             out.write(buffer, 0, bytesRead);
                             copiedBytes += bytesRead;
-                            publish((copiedBytes * 100) / totalBytes);
+                            if (totalBytes > 0) {
+                                publish((copiedBytes * 100) / totalBytes);
+                            }
                         }
                     }
                 }
-                return null;
+            } finally {
+                // Cleanup all temporary files
+                for (Path tempPath : taggedFilesMap.values()) {
+                    try {
+                        Files.deleteIfExists(tempPath);
+                    } catch (IOException e) {
+                        e.printStackTrace(); // Log error, but continue cleanup
+                    }
+                }
             }
+            return null;
+        }
 
-            @Override
-            protected void process(List<Long> chunks) {
-                copyProgressBar.setValue(chunks.get(chunks.size() - 1).intValue());
-            }
+        @Override
+        protected void process(List<Long> chunks) {
+            copyProgressBar.setValue(chunks.get(chunks.size() - 1).intValue());
+        }
 
-            @Override
-            protected void done() {
-                copyProgressDialog.dispose();
+        @Override
+        protected void done() {
+            copyProgressDialog.dispose();
+            try {
+                get(); // Check for exceptions
                 JOptionPane.showMessageDialog(frame, "Tagging complete!", "Success", JOptionPane.INFORMATION_MESSAGE, new ImageIcon(appIcon));
-                btn_clear.doClick();
+            } catch (Exception e) {
+                e.printStackTrace();
+                JOptionPane.showMessageDialog(frame, "An error occurred while copying files.", "Copy Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
             }
-        };
-        copyWorker.execute();
-        copyProgressDialog.setVisible(true);
+            btn_clear.doClick();
+        }
+
+        public void executeAndShow() {
+            execute();
+            copyProgressDialog.setVisible(true);
+        }
     }
+
 
     private void addFilesFromDirectory(File directory) {
         if (directory.isDirectory()) {
@@ -1292,14 +1356,11 @@ public class MainInterface {
 
     private boolean isVideoOrPhoto(File file) {
         String name = file.getName().toLowerCase();
-        for (String ext : VIDEO_PHOTO_EXTENSIONS)
-            if (name.endsWith(ext)){
-                if(file.getAbsolutePath().contains("Volumes/RunMedia")) {
-                    JOptionPane.showMessageDialog(frame, name + " cannot be tagged because it is located on the server.\nPlease tag files from your computer before uploading to RunMedia", "File Location Error", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
-                    return false;
-                }
+        for (String ext : VIDEO_PHOTO_EXTENSIONS) {
+            if (name.endsWith(ext)) {
                 return true;
             }
+        }
         return false;
     }
 
@@ -1378,7 +1439,7 @@ public class MainInterface {
         // but it is kept in case of future changes.
     }
 
-    private void embedJpegMetadata(File file, String description, Location location, String date) throws Exception {
+    private Path embedJpegMetadata(File file, String description, Location location, String date) throws Exception {
         TiffOutputSet outputSet = null;
         try {
             JpegImageMetadata jpegMetadata = (JpegImageMetadata) Imaging.getMetadata(file);
@@ -1396,20 +1457,20 @@ public class MainInterface {
         exifSubIFD.add(ExifTagConstants.EXIF_TAG_DATE_TIME_ORIGINAL, date);
         if (location != null)
             outputSet.setGpsInDegrees(Double.parseDouble(location.lon), Double.parseDouble(location.lat));
-        File tempFile = new File(file.getParent(), "temp_" + file.getName());
-        try (OutputStream os = new BufferedOutputStream(new FileOutputStream(tempFile))) {
+        Path tempFile = Files.createTempFile("metadata_jpeg_", ".jpg");
+        try (OutputStream os = new BufferedOutputStream(Files.newOutputStream(tempFile))) {
             new ExifRewriter().updateExifMetadataLossless(file, os, outputSet);
         }
-        if (!file.delete() || !tempFile.renameTo(file)) throw new IOException("Failed to replace file.");
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy:MM:dd HH:mm:ss");
         LocalDateTime ldt = LocalDateTime.parse(date, formatter);
-        Files.setAttribute(file.toPath(), "basic:creationTime", FileTime.from(ldt.toInstant(ZoneOffset.UTC)));
+        Files.setAttribute(tempFile, "basic:creationTime", FileTime.from(ldt.toInstant(ZoneOffset.UTC)));
+        return tempFile;
     }
 
-    private void embedVideoMetadata(File file, String description, Location location, String date) throws Exception {
+    private Path embedVideoMetadata(File file, String description, Location location, String date) throws Exception {
         String inputFilePath = file.getAbsolutePath();
-        File tempFile = new File(file.getParent(), "temp_" + file.getName());
-        String tempFilePath = tempFile.getAbsolutePath();
+        Path tempFile = Files.createTempFile("metadata_video_", ".mp4");
+        String tempFilePath = tempFile.toAbsolutePath().toString();
         ArrayList<String> command = new ArrayList<>();
         command.add(ffmpegExecutablePath);
         command.add("-i");
@@ -1429,9 +1490,14 @@ public class MainInterface {
         command.add("-y");
         command.add(tempFilePath);
         Process process = new ProcessBuilder(command).start();
-        if (process.waitFor() != 0) throw new IOException("FFmpeg process failed.");
-        if (!file.delete() || !tempFile.renameTo(file)) throw new IOException("Failed to replace file.");
-        Files.setAttribute(file.toPath(), "basic:creationTime", FileTime.from(ldt.toInstant(ZoneOffset.UTC)));
+        if (process.waitFor() != 0) {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+                String error = reader.lines().collect(Collectors.joining("\n"));
+                throw new IOException("FFmpeg process failed: " + error);
+            }
+        }
+        Files.setAttribute(tempFile, "basic:creationTime", FileTime.from(ldt.toInstant(ZoneOffset.UTC)));
+        return tempFile;
     }
 
     private int monthCodeToNumber(String monthCode) {
