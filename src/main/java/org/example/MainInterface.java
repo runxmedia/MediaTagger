@@ -26,6 +26,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.apache.commons.imaging.Imaging;
@@ -578,6 +580,33 @@ public class MainInterface {
         return valid;
     }
 
+    private String guessProjectName(File file) {
+        Path path = file.toPath();
+        String defaultPath = "/Volumes/RunMedia/Production/Projects/";
+        if (!path.startsWith(defaultPath)) {
+            return "";
+        }
+
+        try {
+            Path subpath = path.subpath(4, path.getNameCount());
+            // 0: YYYY, 1: Project Folder, ...
+            if (subpath.getNameCount() >= 2) {
+                String projectFolderName = subpath.getName(1).toString();
+                Pattern pattern = Pattern.compile("^\\d{4}_\\d{2}_(.*)");
+                Matcher matcher = pattern.matcher(projectFolderName);
+                if (matcher.matches()) {
+                    return matcher.group(1).replace('_', ' ').replace('-', ' ');
+                } else {
+                    return projectFolderName.replace('_', ' ').replace('-', ' ');
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            // Path is not long enough, or other path issue.
+            return "";
+        }
+        return "";
+    }
+
     private void processAllMedia() {
         if (transcriptOnlyMode) {
             processTranscriptsOnly();
@@ -596,15 +625,22 @@ public class MainInterface {
         List<File> videosToProcess = selectedFiles.stream()
                 .filter(f -> f.getName().toLowerCase().endsWith(".mp4"))
                 .collect(Collectors.toList());
-        boolean needProjectNames = !videosToProcess.isEmpty()
+        boolean needProjectNames = !selectedFiles.isEmpty()
                 && !(rdo_finished.isSelected() && !chk_text_to_speech.isSelected())
                 && (chk_copy_files.isSelected() || chk_text_to_speech.isSelected());
         projectNames.clear();
         if (needProjectNames) {
-            for (File video : videosToProcess) {
-                String pn = JOptionPane.showInputDialog(frame,
-                        "Enter the Project Name for " + video.getName() + ":",
-                        "Project Name", JOptionPane.PLAIN_MESSAGE);
+            for (File file : selectedFiles) {
+                String suggestedName = guessProjectName(file);
+                String pn = (String) JOptionPane.showInputDialog(
+                        frame,
+                        "Enter the Project Name for " + file.getName() + ":",
+                        "Project Name",
+                        JOptionPane.PLAIN_MESSAGE,
+                        null,
+                        null,
+                        suggestedName
+                );
                 if (pn == null || pn.trim().isEmpty()) {
                     JOptionPane.showMessageDialog(frame,
                             "Process canceled: Project name cannot be empty.",
@@ -612,7 +648,7 @@ public class MainInterface {
                             new ImageIcon(appIcon));
                     return;
                 }
-                projectNames.put(video, pn.trim());
+                projectNames.put(file, pn.trim());
             }
         }
 
@@ -666,9 +702,16 @@ public class MainInterface {
 
         projectNames.clear();
         for (File video : videos) {
-            String pn = JOptionPane.showInputDialog(frame,
+            String suggestedName = guessProjectName(video);
+            String pn = (String) JOptionPane.showInputDialog(
+                    frame,
                     "Enter the Project Name for " + video.getName() + ":",
-                    "Project Name", JOptionPane.PLAIN_MESSAGE);
+                    "Project Name",
+                    JOptionPane.PLAIN_MESSAGE,
+                    null,
+                    null,
+                    suggestedName
+            );
             if (pn == null || pn.trim().isEmpty()) {
                 JOptionPane.showMessageDialog(frame,
                         "Process canceled: Project name cannot be empty.",
