@@ -1471,32 +1471,74 @@ public class MainInterface {
         String inputFilePath = file.getAbsolutePath();
         Path tempFile = Files.createTempFile("metadata_video_", ".mp4");
         String tempFilePath = tempFile.toAbsolutePath().toString();
+
+        // Parse the input date (YYYY:MM:DD HH:mm:ss)
+        DateTimeFormatter exifFormatter = DateTimeFormatter.ofPattern("yyyy:MM:dd HH:mm:ss");
+        LocalDateTime ldt = LocalDateTime.parse(date, exifFormatter);
+
+        // 1. Standard ISO Date for "creation_time" (UTC)
+        String isoDate = ldt.atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_INSTANT); // e.g. 2023-01-01T12:00:00Z
+
+        // 2. Apple/QuickTime Date (ISO with Offset).
+        // Immich loves this tag. We use +00:00 here to match your UTC logic.
+        String appleDate = ldt.atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME); // e.g. 2023-01-01T12:00:00+00:00
+
         ArrayList<String> command = new ArrayList<>();
         command.add(ffmpegExecutablePath);
         command.add("-i");
         command.add(inputFilePath);
+
+        // Clear ALL existing global metadata to prevent conflicts
+        command.add("-map_metadata");
+        command.add("-1");
+
         command.add("-c");
         command.add("copy");
+
+        // --- KEY METADATA TAGS ---
+
+        // 1. Standard FFmpeg/Container Tag (Maps to CreateDate)
+        command.add("-metadata");
+        command.add("creation_time=" + isoDate);
+
+        // 2. Apple/QuickTime Tag (Maps to CreationDate) - High Priority in Immich
+        // This tag supports local time + offset, which is preferred over the rigid UTC of creation_time
+        command.add("-metadata");
+        command.add("com.apple.quicktime.creationdate=" + appleDate);
+
+        // 3. Description
         command.add("-metadata");
         command.add("description=" + description);
-        DateTimeFormatter exifFormatter = DateTimeFormatter.ofPattern("yyyy:MM:dd HH:mm:ss");
-        LocalDateTime ldt = LocalDateTime.parse(date, exifFormatter);
+        // Also write description to the Apple/QuickTime key for broader compatibility
         command.add("-metadata");
-        command.add("creation_time=" + ldt.atOffset(ZoneOffset.UTC).toString());
+        command.add("com.apple.quicktime.description=" + description);
+
         if (location != null) {
             command.add("-metadata");
             command.add("location=" + String.format("%+f%+f/", Double.parseDouble(location.lat), Double.parseDouble(location.lon)));
+            // Attempt to write Apple location key as well
+            command.add("-metadata");
+            command.add("com.apple.quicktime.location.ISO6709=" + String.format("%+f%+f/", Double.parseDouble(location.lat), Double.parseDouble(location.lon)));
         }
+
         command.add("-y");
         command.add(tempFilePath);
+
         Process process = new ProcessBuilder(command).start();
-        if (process.waitFor() != 0) {
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
-                String error = reader.lines().collect(Collectors.joining("\n"));
-                throw new IOException("FFmpeg process failed: " + error);
+
+        // Capture error output for debugging if it fails
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+            String line;
+            StringBuilder errorOutput = new StringBuilder();
+            while ((line = reader.readLine()) != null) {
+                errorOutput.append(line).append("\n");
+            }
+
+            if (process.waitFor() != 0) {
+                throw new IOException("FFmpeg process failed:\n" + errorOutput.toString());
             }
         }
-        Files.setAttribute(tempFile, "basic:creationTime", FileTime.from(ldt.toInstant(ZoneOffset.UTC)));
+
         return tempFile;
     }
 
