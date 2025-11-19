@@ -58,6 +58,8 @@ public class MainInterface {
     private JButton btn_go;
     private JPanel pnl_main_interface;
     private JList<File> lst_file_contents;
+    private JScrollPane lst_files;
+    private JLabel lbl_date;
     private JTextField txt_search_location;
     private JList<Location> lst_search_location_results;
     private JComboBox<String> combo_month;
@@ -601,6 +603,20 @@ public class MainInterface {
         return "";
     }
 
+    private String getProjectLocationFromFile(File file) {
+        Path path = file.toPath();
+        String pathString = path.toString();
+        String prefix = "/Volumes/RunMedia/Production/Projects/";
+        if (pathString.startsWith(prefix)) {
+            String remainingPath = pathString.substring(prefix.length());
+            String[] parts = remainingPath.split("/");
+            if (parts.length >= 2) { // YYYY and ProjectFolder
+                return "RunMedia/Production/Projects/" + parts[0] + "/" + parts[1];
+            }
+        }
+        return null;
+    }
+
     private void processAllMedia() {
         if (transcriptOnlyMode) {
             processTranscriptsOnly();
@@ -673,9 +689,12 @@ public class MainInterface {
                         int year = (int) yearObj;
                         int month = monthCodeToNumber((String) monthObj);
                         String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
-                        String projectLocation = rdo_finished.isSelected()
-                                ? "RunMedia/Production/Projects/" + year + "/" + folderName
-                                : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
+                        String projectLocation = getProjectLocationFromFile(file);
+                        if (projectLocation == null) {
+                            projectLocation = rdo_finished.isSelected()
+                                    ? "RunMedia/Production/Projects/" + year + "/" + folderName
+                                    : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
+                        }
                         String finalOutput = "Project Name:\n" + pn + "\n\n" +
                                 "Project Location:\n" + projectLocation + "\n\n" + finalText;
                         transcripts.put(file, finalOutput);
@@ -736,9 +755,12 @@ public class MainInterface {
                         int year = (int) yearObj;
                         int month = monthCodeToNumber((String) monthObj);
                         String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
-                        String projectLocation = rdo_finished.isSelected()
-                                ? "RunMedia/Production/Projects/" + year + "/" + folderName
-                                : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
+                        String projectLocation = getProjectLocationFromFile(video);
+                        if (projectLocation == null) {
+                            projectLocation = rdo_finished.isSelected()
+                                    ? "RunMedia/Production/Projects/" + year + "/" + folderName
+                                    : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
+                        }
                         String finalOutput = "Project Name:\n" + pn + "\n\n" +
                                 "Project Location:\n" + projectLocation + "\n\n" + finalText;
                         transcripts.put(video, finalOutput);
@@ -1185,14 +1207,18 @@ public class MainInterface {
                     String tagsStr = String.join(", ", tags);
                     String peopleStr = String.join(", ", peopleForFile);
                     String pn = projectNames.getOrDefault(file, "");
-                    String projectLocation = "";
-                    if (!pn.isEmpty()) {
-                        int year = (int) yearObj;
-                        int month = monthCodeToNumber((String) monthObj);
-                        String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
-                        projectLocation = rdo_finished.isSelected()
-                                ? "RunMedia/Production/Projects/" + year + "/" + folderName
-                                : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
+                    String projectLocation = getProjectLocationFromFile(file);
+                    if (projectLocation == null) {
+                        if (!pn.isEmpty()) {
+                            int year = (int) yearObj;
+                            int month = monthCodeToNumber((String) monthObj);
+                            String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
+                            projectLocation = rdo_finished.isSelected()
+                                    ? "RunMedia/Production/Projects/" + year + "/" + folderName
+                                    : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
+                        } else {
+                            projectLocation = "";
+                        }
                     }
                     String transcript = transcripts.getOrDefault(file, "");
                     String description = "Tags: " + tagsStr + "\n" +
