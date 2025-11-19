@@ -9,10 +9,10 @@ import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.awt.datatransfer.DataFlavor;
-import java.awt.datatransfer.StringSelection;
 import java.awt.dnd.DnDConstants;
 import java.awt.dnd.DropTarget;
 import java.awt.dnd.DropTargetAdapter;
@@ -46,7 +46,6 @@ public class MainInterface {
     private static final String VERSION = loadVersion();
 
     // UI Components
-    private JScrollPane lst_files;
     private JButton btn_clear;
     private JButton btn_add;
     private JButton btn_remove_item;
@@ -61,7 +60,6 @@ public class MainInterface {
     private JList<File> lst_file_contents;
     private JTextField txt_search_location;
     private JList<Location> lst_search_location_results;
-    private JLabel lbl_date;
     private JComboBox<String> combo_month;
     private JComboBox<Integer> combo_day;
     private JComboBox<Integer> combo_year;
@@ -77,27 +75,26 @@ public class MainInterface {
     private final JFrame frame;
 
     // Class members
-    private JFileChooser file_chooser;
-    private ArrayList<File> selectedFiles;
-    private ArrayList<String> tags;
-    private Map<File, String> transcripts;
-    private Map<File, String> projectNames;
+    private final JFileChooser file_chooser;
+    private final ArrayList<File> selectedFiles;
+    private final ArrayList<String> tags;
+    private final Map<File, String> transcripts;
+    private final Map<File, String> projectNames;
     private Location selectedLocation;
     private Path resourceDir;
     private String pythonExecutablePath;
     private String ffmpegExecutablePath;
     private String ffprobeExecutablePath;
     private String hfToken; // --- ADDED: To hold the Hugging Face token
-    private static final String[] VIDEO_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".mp4"};
-    private Image appIcon;
+    private static final String[] VIDEO_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".mp4", ".mov"};
+    private final Image appIcon;
     private boolean transcriptOnlyMode = false;
     private int clearClickCount = 0;
     private int removeTagClickCount = 0;
     private long lastRemoveTagClickTime = 0;
-    private JLabel transcriptBanner;
-    private JPanel rootPanel;
-    private Border defaultBorder;
-    private Border redBorder = BorderFactory.createLineBorder(Color.RED, 2);
+    private final JLabel transcriptBanner;
+    private final Border defaultBorder;
+    private final Border redBorder = BorderFactory.createLineBorder(Color.RED, 2);
 
     public static void main(String[] args) {
         System.setProperty("apple.awt.application.name", "Media Tagger");
@@ -178,7 +175,7 @@ public class MainInterface {
         transcriptBanner.setForeground(Color.WHITE);
         transcriptBanner.setVisible(false);
 
-        rootPanel = new JPanel(new BorderLayout());
+        JPanel rootPanel = new JPanel(new BorderLayout());
         rootPanel.add(transcriptBanner, BorderLayout.NORTH);
         rootPanel.add(pnl_main_interface, BorderLayout.CENTER);
 
@@ -260,7 +257,7 @@ public class MainInterface {
                         System.exit(1);
                     }
                 } catch (CancellationException | InterruptedException | ExecutionException e) {
-                    e.printStackTrace();
+                    System.err.println("An unexpected error occurred during the startup routine: " + e.getMessage());
                     JOptionPane.showMessageDialog(frame,
                             "An unexpected error occurred during the startup routine:\n" + e.getMessage(),
                             "Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
@@ -335,15 +332,12 @@ public class MainInterface {
     private void setupGUI() {
         String[] version = VERSION.split(",");
         btn_version.setText("<html><div style='opacity:0.5;'>Version: " + version[0] + "</div></html>");
-        btn_version.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-                    try {
-                        Desktop.getDesktop().browse(new URI(version[1]));
-                    } catch (IOException | URISyntaxException ex) {
-                        ex.printStackTrace();
-                    }
+        btn_version.addActionListener(e -> {
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                try {
+                    Desktop.getDesktop().browse(new URI(version[1]));
+                } catch (IOException | URISyntaxException ex) {
+                    System.err.println("Could not open version link: " + ex.getMessage());
                 }
             }
         });
@@ -383,7 +377,7 @@ public class MainInterface {
                     }
                     lst_file_contents.setListData(selectedFiles.toArray(new File[0]));
                 } catch (Exception ex) {
-                    ex.printStackTrace();
+                    System.err.println("Error handling drop event: " + ex.getMessage());
                 }
             }
         }));
@@ -418,7 +412,7 @@ public class MainInterface {
                 return;
             }
             if (!tags.isEmpty()) {
-                tags.remove(tags.size() - 1);
+                tags.removeLast();
                 updateTagsLabel();
             }
         });
@@ -451,7 +445,7 @@ public class MainInterface {
             try {
                 Desktop.getDesktop().browse(new URI(url));
             } catch (IOException | URISyntaxException ex) {
-                ex.printStackTrace();
+                System.err.println("Could not open help link: " + ex.getMessage());
             }
         }
     }
@@ -473,7 +467,7 @@ public class MainInterface {
                 try {
                     Desktop.getDesktop().browse(new URI(url));
                 } catch (IOException | URISyntaxException ex) {
-                    ex.printStackTrace();
+                    System.err.println("Unexpected error opening URL: " + ex.getMessage());
                 }
             }
             return true;
@@ -623,11 +617,9 @@ public class MainInterface {
             tags.add("👷‍♀️Reviewed by Safety");
         }
         List<File> videosToProcess = selectedFiles.stream()
-                .filter(f -> f.getName().toLowerCase().endsWith(".mp4"))
+                .filter(f -> f.getName().toLowerCase().endsWith(".mp4") || f.getName().toLowerCase().endsWith(".mov"))
                 .collect(Collectors.toList());
-        boolean needProjectNames = !selectedFiles.isEmpty()
-                && !(rdo_finished.isSelected() && !chk_text_to_speech.isSelected())
-                && (chk_copy_files.isSelected() || chk_text_to_speech.isSelected());
+        boolean needProjectNames = !selectedFiles.isEmpty();
         projectNames.clear();
         if (needProjectNames) {
             for (File file : selectedFiles) {
@@ -674,18 +666,23 @@ public class MainInterface {
                 FaceData fd = faceDataMap.get(file);
                 String finalText = showTranscriptReviewDialog(file, transcripts.get(file), fd);
                 String pn = projectNames.get(file);
-                String finalOutput = finalText;
                 if (pn != null) {
-                    int year = (int) combo_year.getSelectedItem();
-                    int month = monthCodeToNumber((String) combo_month.getSelectedItem());
-                    String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
-                    String projectLocation = rdo_finished.isSelected()
-                            ? "RunMedia/Production/Projects/" + year + "/" + folderName
-                            : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
-                    finalOutput = "Project Name:\n" + pn + "\n\n" +
-                            "Project Location:\n" + projectLocation + "\n\n" + finalText;
+                    Object yearObj = combo_year.getSelectedItem();
+                    Object monthObj = combo_month.getSelectedItem();
+                    if (yearObj != null && monthObj != null) {
+                        int year = (int) yearObj;
+                        int month = monthCodeToNumber((String) monthObj);
+                        String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
+                        String projectLocation = rdo_finished.isSelected()
+                                ? "RunMedia/Production/Projects/" + year + "/" + folderName
+                                : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
+                        String finalOutput = "Project Name:\n" + pn + "\n\n" +
+                                "Project Location:\n" + projectLocation + "\n\n" + finalText;
+                        transcripts.put(file, finalOutput);
+                    }
+                } else {
+                    transcripts.put(file, finalText);
                 }
-                transcripts.put(file, finalText);
             }
         }
         runFinalEmbeddingProcess(confirmedTags);
@@ -693,7 +690,7 @@ public class MainInterface {
 
     private void processTranscriptsOnly() {
         List<File> videos = selectedFiles.stream()
-                .filter(f -> f.getName().toLowerCase().endsWith(".mp4"))
+                .filter(f -> f.getName().toLowerCase().endsWith(".mp4") || f.getName().toLowerCase().endsWith(".mov"))
                 .collect(Collectors.toList());
         if (videos.isEmpty()) {
             JOptionPane.showMessageDialog(frame, "Please add at least one video.", "Warning", JOptionPane.WARNING_MESSAGE, new ImageIcon(appIcon));
@@ -732,18 +729,23 @@ public class MainInterface {
                 FaceData fd = data.getOrDefault(video, new FaceData(new ArrayList<>(), new ArrayList<>()));
                 String finalText = showTranscriptReviewDialog(video, json, fd);
                 String pn = projectNames.get(video);
-                String finalOutput = finalText;
                 if (pn != null) {
-                    int year = (int) combo_year.getSelectedItem();
-                    int month = monthCodeToNumber((String) combo_month.getSelectedItem());
-                    String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
-                    String projectLocation = rdo_finished.isSelected()
-                            ? "RunMedia/Production/Projects/" + year + "/" + folderName
-                            : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
-                    finalOutput = "Project Name:\n" + pn + "\n\n" +
-                            "Project Location:\n" + projectLocation + "\n\n" + finalText;
+                    Object yearObj = combo_year.getSelectedItem();
+                    Object monthObj = combo_month.getSelectedItem();
+                    if (yearObj != null && monthObj != null) {
+                        int year = (int) yearObj;
+                        int month = monthCodeToNumber((String) monthObj);
+                        String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
+                        String projectLocation = rdo_finished.isSelected()
+                                ? "RunMedia/Production/Projects/" + year + "/" + folderName
+                                : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
+                        String finalOutput = "Project Name:\n" + pn + "\n\n" +
+                                "Project Location:\n" + projectLocation + "\n\n" + finalText;
+                        transcripts.put(video, finalOutput);
+                    }
+                } else {
+                    transcripts.put(video, finalText);
                 }
-                transcripts.put(video, finalText);
             }
         }
     }
@@ -914,7 +916,7 @@ public class MainInterface {
                                 SwingUtilities.invokeLater(() ->
                                         JOptionPane.showMessageDialog(frame, errorMessage, "Speech Detection Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon))
                                 );
-                            } else if (speechResult.length() > 0) {
+                            } else if (!speechResult.isEmpty()) {
                                 transcripts.put(video, speechResult.toString());
                             }
                         }
@@ -958,13 +960,12 @@ public class MainInterface {
             return null;
         } catch (InterruptedException | ExecutionException e) {
             System.err.println("An error occurred during face recognition execution.");
-            e.printStackTrace();
             return null;
         }
     }
 
     private List<String> showTagReviewDialog(File video, List<String> initialNames) {
-        JDialog dialog = new JDialog(frame, "Review Tags for " + video.getName(), true);
+        JDialog dialog = new JDialog(frame, "Review Names for " + video.getName(), true);
         if (this.appIcon != null) {
             dialog.setIconImage(this.appIcon);
         }
@@ -1072,10 +1073,6 @@ public class MainInterface {
         java.util.List<JLabel> segmentLabels = new ArrayList<>();
         for (int i = 0; i < segments.length(); i++) {
             JSONObject seg = segments.getJSONObject(i);
-            String spk = seg.getString("speaker");
-            double start = seg.getDouble("start");
-            double end = seg.getDouble("end");
-
             JLabel lbl = new JLabel();
             JTextField tf = new JTextField(seg.getString("text"), 40);
             segmentTextFields.add(tf);
@@ -1169,10 +1166,18 @@ public class MainInterface {
 
         SwingWorker<Map<File, Path>, Integer> worker = new SwingWorker<>() {
             @Override
-            protected Map<File, Path> doInBackground() throws Exception {
+            protected Map<File, Path> doInBackground() {
                 Map<File, Path> taggedFilesMap = new HashMap<>();
                 int count = 0;
-                String selectedDate = String.format("%04d:%02d:%02d 00:00:00", (int) combo_year.getSelectedItem(), monthCodeToNumber((String) combo_month.getSelectedItem()), (int) combo_day.getSelectedItem());
+                Object yearObj = combo_year.getSelectedItem();
+                Object monthObj = combo_month.getSelectedItem();
+                Object dayObj = combo_day.getSelectedItem();
+
+                if (yearObj == null || monthObj == null || dayObj == null) {
+                    return taggedFilesMap;
+                }
+
+                String selectedDate = String.format("%04d:%02d:%02d 00:00:00", (int) yearObj, monthCodeToNumber((String) monthObj), (int) dayObj);
 
                 for (Map.Entry<File, List<String>> entry : allFileTags.entrySet()) {
                     File file = entry.getKey();
@@ -1182,34 +1187,30 @@ public class MainInterface {
                     String pn = projectNames.getOrDefault(file, "");
                     String projectLocation = "";
                     if (!pn.isEmpty()) {
-                        int year = (int) combo_year.getSelectedItem();
-                        int month = monthCodeToNumber((String) combo_month.getSelectedItem());
+                        int year = (int) yearObj;
+                        int month = monthCodeToNumber((String) monthObj);
                         String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
                         projectLocation = rdo_finished.isSelected()
                                 ? "RunMedia/Production/Projects/" + year + "/" + folderName
                                 : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
                     }
                     String transcript = transcripts.getOrDefault(file, "");
-                    StringBuilder descBuilder = new StringBuilder();
-                    descBuilder.append("Tags: ").append(tagsStr).append("\n");
-                    descBuilder.append("People: ").append(peopleStr).append("\n");
-                    descBuilder.append("Project Name: ").append(pn).append("\n");
-                    descBuilder.append("Project Location: ").append(projectLocation).append("\n");
-                    descBuilder.append("Transcript:\n").append(transcript);
-                    String description = descBuilder.toString();
+                    String description = "Tags: " + tagsStr + "\n" +
+                            "People: " + peopleStr + "\n" +
+                            "Project Name: " + pn + "\n" +
+                            "Project Location: " + projectLocation + "\n" +
+                            "Transcript:\n" + transcript;
 
                     try {
                         Path taggedFile;
-                        if (file.getName().toLowerCase().endsWith(".mp4")) {
+                        if (file.getName().toLowerCase().endsWith(".mp4") || file.getName().toLowerCase().endsWith(".mov")) {
                             taggedFile = embedVideoMetadata(file, description, selectedLocation, selectedDate);
                         } else {
                             taggedFile = embedJpegMetadata(file, description, selectedLocation, selectedDate);
                         }
                         taggedFilesMap.put(file, taggedFile);
                     } catch (Exception e) {
-                        e.printStackTrace();
-                        // Optionally, clean up any temp file created for this failed item
-                        // For now, we rely on the final cleanup in the next worker
+                        System.err.println("Failed to embed metadata for file " + file.getName() + ": " + e.getMessage());
                     }
                     publish(++count);
                 }
@@ -1218,7 +1219,7 @@ public class MainInterface {
 
             @Override
             protected void process(List<Integer> chunks) {
-                int current = chunks.get(chunks.size() - 1);
+                int current = chunks.getLast();
                 progressBar.setValue(current);
                 progressLabel.setText("Embedding file " + current + " of " + allFileTags.size());
             }
@@ -1230,7 +1231,7 @@ public class MainInterface {
                     Map<File, Path> taggedFilesMap = get();
                     finishProcessing(taggedFilesMap);
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    System.err.println("An error occurred during the embedding process: " + e.getMessage());
                     JOptionPane.showMessageDialog(frame, "An error occurred during the embedding process.", "Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
                 }
             }
@@ -1289,7 +1290,7 @@ public class MainInterface {
                                 Process p = new ProcessBuilder("bash", resourceDir.resolve("mount_server.sh").toString()).start();
                                 p.waitFor();
                             } catch (IOException | InterruptedException e) {
-                                e.printStackTrace();
+                                System.err.println("Failed to mount server: " + e.getMessage());
                             }
                         }
                     }
@@ -1314,21 +1315,31 @@ public class MainInterface {
                     Path tempTaggedFile = entry.getValue();
                     Path destDir;
                     String destFileName = sourceFile.getName();
+                    if (destFileName.toLowerCase().endsWith(".mov")) {
+                        destFileName = destFileName.substring(0, destFileName.lastIndexOf('.')) + ".mp4";
+                    }
 
                     if (uploadToXGrid && xGridAvailable) {
-                        int year = (int) combo_year.getSelectedItem();
-                        int month = monthCodeToNumber((String) combo_month.getSelectedItem());
-                        if (rdo_finished.isSelected()) {
-                            destDir = Paths.get("/Volumes/RunMedia/XGridLibrary/" + year + "/");
+                        Object yearObj = combo_year.getSelectedItem();
+                        Object monthObj = combo_month.getSelectedItem();
+                        if (yearObj != null && monthObj != null) {
+                            int year = (int) yearObj;
+                            int month = monthCodeToNumber((String) monthObj);
+                            if (rdo_finished.isSelected()) {
+                                destDir = Paths.get("/Volumes/RunMedia/XGridLibrary/" + year + "/");
+                            } else {
+                                String pn = projectNames.get(sourceFile);
+                                if (pn == null) pn = "";
+                                String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
+                                destDir = Paths.get("/Volumes/RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName + "/");
+                            }
                         } else {
-                            String pn = projectNames.get(sourceFile);
-                            if (pn == null) pn = "";
-                            String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
-                            destDir = Paths.get("/Volumes/RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName + "/");
+                            destDir = sourceFile.getParentFile().toPath();
+                            destFileName = "tagged_" + destFileName;
                         }
                     } else {
                         destDir = sourceFile.getParentFile().toPath();
-                        destFileName = "tagged_" + sourceFile.getName();
+                        destFileName = "tagged_" + destFileName;
                     }
 
                     Files.createDirectories(destDir);
@@ -1354,7 +1365,7 @@ public class MainInterface {
                     try {
                         Files.deleteIfExists(tempPath);
                     } catch (IOException e) {
-                        e.printStackTrace(); // Log error, but continue cleanup
+                        System.err.println("Failed to delete temporary file: " + tempPath + " (" + e.getMessage() + ")");
                     }
                 }
             }
@@ -1363,7 +1374,7 @@ public class MainInterface {
 
         @Override
         protected void process(List<Long> chunks) {
-            copyProgressBar.setValue(chunks.get(chunks.size() - 1).intValue());
+            copyProgressBar.setValue(chunks.getLast().intValue());
         }
 
         @Override
@@ -1373,7 +1384,7 @@ public class MainInterface {
                 get(); // Check for exceptions
                 JOptionPane.showMessageDialog(frame, "Tagging complete!", "Success", JOptionPane.INFORMATION_MESSAGE, new ImageIcon(appIcon));
             } catch (Exception e) {
-                e.printStackTrace();
+                System.err.println("An error occurred while copying files: " + e.getMessage());
                 JOptionPane.showMessageDialog(frame, "An error occurred while copying files.", "Copy Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon));
             }
             btn_clear.doClick();
@@ -1401,8 +1412,35 @@ public class MainInterface {
         String name = file.getName().toLowerCase();
         for (String ext : VIDEO_PHOTO_EXTENSIONS) {
             if (name.endsWith(ext)) {
+                if (name.endsWith(".mov")) {
+                    return isVideoH264(file);
+                }
                 return true;
             }
+        }
+        return false;
+    }
+
+    private boolean isVideoH264(File file) {
+        if (ffprobeExecutablePath == null) {
+            return false;
+        }
+        try {
+            ProcessBuilder pb = new ProcessBuilder(ffprobeExecutablePath,
+                    "-v", "error",
+                    "-select_streams", "v:0",
+                    "-show_entries", "stream=codec_name",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    file.getAbsolutePath());
+            Process process = pb.start();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String codecName = reader.readLine();
+                if (process.waitFor() == 0) {
+                    return "h264".equalsIgnoreCase(codecName);
+                }
+            }
+        } catch (IOException | InterruptedException e) {
+            System.err.println("Error checking video codec: " + e.getMessage());
         }
         return false;
     }
@@ -1415,8 +1453,8 @@ public class MainInterface {
         String city = txt_search_location.getText().trim();
         if (city.isEmpty()) return;
         try {
-            String urlString = "https://nominatim.openstreetmap.org/search?q=" + URLEncoder.encode(city, "UTF-8") + "&format=json";
-            URL url = new URL(urlString);
+            String urlString = "https://nominatim.openstreetmap.org/search?q=" + URLEncoder.encode(city, StandardCharsets.UTF_8) + "&format=json";
+            URL url = new URI(urlString).toURL();
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setRequestProperty("User-Agent", "MediaTagger/1.0");
@@ -1430,8 +1468,8 @@ public class MainInterface {
                 }
                 lst_search_location_results.setModel(model);
             }
-        } catch (IOException ex) {
-            ex.printStackTrace();
+        } catch (IOException | URISyntaxException ex) {
+            System.err.println("Error searching for location: " + ex.getMessage());
         }
     }
 
@@ -1475,11 +1513,6 @@ public class MainInterface {
             }
         });
 
-    }
-
-    private void updateDayComboBox(Integer dayToSelect) {
-        // This method is now obsolete with the new validation approach,
-        // but it is kept in case of future changes.
     }
 
     private Path embedJpegMetadata(File file, String description, Location location, String date) throws Exception {
@@ -1578,7 +1611,7 @@ public class MainInterface {
             }
 
             if (process.waitFor() != 0) {
-                throw new IOException("FFmpeg process failed:\n" + errorOutput.toString());
+                throw new IOException("FFmpeg process failed:\n" + errorOutput);
             }
         }
 
@@ -1619,14 +1652,14 @@ public class MainInterface {
     private void showWhatsNewDialog() {
         try (InputStream in = getClass().getClassLoader().getResourceAsStream("whats_new.html")) {
             if (in == null) return;
-            String html = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            String html = new String(in.readAllBytes(), StandardCharsets.UTF_8);
             JEditorPane pane = new JEditorPane("text/html", html);
             pane.setEditable(false);
             JScrollPane scroll = new JScrollPane(pane);
             scroll.setPreferredSize(new Dimension(800, 700));
             JOptionPane.showMessageDialog(frame, scroll, "What's New", JOptionPane.INFORMATION_MESSAGE, new ImageIcon(appIcon));
         } catch (IOException e) {
-            e.printStackTrace();
+            System.err.println("Could not show 'What's New' dialog: " + e.getMessage());
         }
     }
 
