@@ -1,7 +1,10 @@
 package org.example;
 
+import com.formdev.flatlaf.FlatLightLaf;
+
 import javax.swing.*;
 import javax.swing.border.Border;
+import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -99,6 +102,7 @@ public class MainInterface {
     private final Border redBorder = BorderFactory.createLineBorder(Color.RED, 2);
 
     public static void main(String[] args) {
+        FlatLightLaf.setup();
         System.setProperty("apple.awt.application.name", "Media Tagger");
         new MainInterface();
     }
@@ -332,6 +336,8 @@ public class MainInterface {
     }
 
     private void setupGUI() {
+        pnl_main_interface.setBorder(new EmptyBorder(20, 20, 20, 20));
+
         String[] version = VERSION.split(",");
         btn_version.setText("<html><div style='opacity:0.5;'>Version: " + version[0] + "</div></html>");
         btn_version.addActionListener(e -> {
@@ -344,18 +350,27 @@ public class MainInterface {
             }
         });
 
+        lst_file_contents.setFixedCellHeight(30);
         lst_file_contents.setCellRenderer(new DefaultListCellRenderer() {
             @Override
             public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
                 Component renderer = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
                 if (renderer instanceof JLabel && value instanceof File) {
-                    ((JLabel) renderer).setText(((File) value).getName());
+                    JLabel label = (JLabel) renderer;
+                    label.setText(((File) value).getName());
+                    label.setBorder(new EmptyBorder(0, 10, 0, 0));
                 }
                 return renderer;
             }
         });
 
+        frame.getRootPane().setDefaultButton(btn_go);
+        btn_go.putClientProperty("JButton.buttonType", "roundRect");
+        btn_go.setBackground(new Color(62, 122, 251));
+        btn_go.setForeground(Color.WHITE);
+        btn_go.setFont(btn_go.getFont().deriveFont(Font.BOLD, 14f));
         btn_go.addActionListener(e -> processAllMedia());
+
         btn_help.addActionListener(e -> openHelpLink());
         btn_add.addActionListener(e -> {
             file_chooser.setDialogTitle("Select Photos and Videos to add");
