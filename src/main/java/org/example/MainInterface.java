@@ -2,12 +2,13 @@ package org.example;
 
 import com.formdev.flatlaf.FlatLightLaf;
 
+import javax.sound.sampled.*;
 import javax.swing.*;
 import javax.swing.border.Border;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.io.*;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -32,6 +33,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import javax.swing.Timer;
 
 import org.apache.commons.imaging.Imaging;
 import org.apache.commons.imaging.formats.jpeg.exif.ExifRewriter;
@@ -97,6 +99,7 @@ public class MainInterface {
     private int clearClickCount = 0;
     private int removeTagClickCount = 0;
     private long lastRemoveTagClickTime = 0;
+    private int locationClickCount = 0;
     private final JLabel transcriptBanner;
     private final Border defaultBorder;
     private final Border redBorder = BorderFactory.createLineBorder(Color.RED, 2);
@@ -440,6 +443,16 @@ public class MainInterface {
                 selectedLocation = lst_search_location_results.getSelectedValue();
                 if (selectedLocation != null) {
                     lbl_location.setText("<html><div style='width:350px;'>Location: " + selectedLocation.displayName + "</div></html>");
+                }
+            }
+        });
+        lbl_location.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                locationClickCount++;
+                if (locationClickCount >= 7) {
+                    locationClickCount = 0;
+                    triggerElphabaAnimation();
                 }
             }
         });
@@ -1702,6 +1715,95 @@ public class MainInterface {
         } catch (IOException e) {
             System.err.println("Could not show 'What's New' dialog: " + e.getMessage());
         }
+    }
+
+    private void triggerElphabaAnimation() {
+        URL elphabaURL = getClass().getClassLoader().getResource("elphaba.png");
+        if (elphabaURL == null) {
+            System.err.println("Could not find elphaba.png in resources.");
+            return;
+        }
+        ImageIcon elphabaIcon = new ImageIcon(elphabaURL);
+        JLabel elphabaLabel = new JLabel(elphabaIcon);
+        elphabaLabel.setSize(elphabaIcon.getIconWidth(), elphabaIcon.getIconHeight());
+
+        JLayeredPane layeredPane = frame.getLayeredPane();
+        layeredPane.add(elphabaLabel, JLayeredPane.DRAG_LAYER);
+
+        // Start from just off-screen on the left, centered vertically
+        int startX = -elphabaIcon.getIconWidth();
+        int startY = (frame.getHeight() - elphabaIcon.getIconHeight()) / 2;
+        elphabaLabel.setLocation(startX, startY);
+
+        int endX = frame.getWidth();
+
+        // Play sound
+        try {
+            URL soundURL = getClass().getClassLoader().getResource("fly.wav");
+            if (soundURL != null) {
+                AudioInputStream audioStream = AudioSystem.getAudioInputStream(soundURL);
+                Clip clip = AudioSystem.getClip();
+                clip.open(audioStream);
+                clip.start();
+            } else {
+                System.err.println("Could not find fly.wav in resources.");
+            }
+        } catch (UnsupportedAudioFileException | IOException | LineUnavailableException e) {
+            System.err.println("Error playing sound: " + e.getMessage());
+        }
+
+        Timer timer = new Timer(10, null);
+        timer.addActionListener(e -> {
+            int currentX = elphabaLabel.getX();
+
+            int newX = currentX + 5; // Speed of flight
+
+            // Calculate Y for a parabolic arc
+            // Fly "out" of the window (up) and then back down
+            double normalizedX = (double) (newX + elphabaIcon.getIconWidth()) / (endX + elphabaIcon.getIconWidth());
+            int arcHeight = 250; // How high she flies
+            int newY = startY - (int) (arcHeight * Math.sin(normalizedX * Math.PI));
+
+            elphabaLabel.setLocation(newX, newY);
+
+            if (newX > endX) {
+                timer.stop();
+                layeredPane.remove(elphabaLabel);
+                layeredPane.repaint();
+                // Trigger fireworks after a delay
+                Timer fireworksTimer = new Timer(1000, e2 -> showFireworks());
+                fireworksTimer.setRepeats(false);
+                fireworksTimer.start();
+            }
+        });
+        timer.start();
+    }
+
+    private void showFireworks() {
+        URL fireworksUrl = getClass().getClassLoader().getResource("fireworks.gif");
+        if (fireworksUrl == null) {
+            System.err.println("Could not find fireworks.gif in resources.");
+            return;
+        }
+        ImageIcon fireworksIcon = new ImageIcon(fireworksUrl);
+        JLabel fireworksLabel = new JLabel(fireworksIcon);
+        fireworksLabel.setSize(frame.getSize());
+        fireworksLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        fireworksLabel.setVerticalAlignment(SwingConstants.CENTER);
+
+        JLayeredPane layeredPane = frame.getLayeredPane();
+        layeredPane.add(fireworksLabel, JLayeredPane.POPUP_LAYER);
+        layeredPane.revalidate();
+        layeredPane.repaint();
+
+        // Hide fireworks after a delay (e.g., 5 seconds)
+        Timer hideTimer = new Timer(7000, e -> {
+            layeredPane.remove(fireworksLabel);
+            layeredPane.revalidate();
+            layeredPane.repaint();
+        });
+        hideTimer.setRepeats(false);
+        hideTimer.start();
     }
 
     private static class Location {
