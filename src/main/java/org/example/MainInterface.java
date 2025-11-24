@@ -709,27 +709,7 @@ public class MainInterface {
             if (chk_text_to_speech.isSelected() && transcripts.containsKey(file)) {
                 FaceData fd = faceDataMap.get(file);
                 String finalText = showTranscriptReviewDialog(file, transcripts.get(file), fd);
-                String pn = projectNames.get(file);
-                if (pn != null) {
-                    Object yearObj = combo_year.getSelectedItem();
-                    Object monthObj = combo_month.getSelectedItem();
-                    if (yearObj != null && monthObj != null) {
-                        int year = (int) yearObj;
-                        int month = monthCodeToNumber((String) monthObj);
-                        String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
-                        String projectLocation = getProjectLocationFromFile(file);
-                        if (projectLocation == null) {
-                            projectLocation = rdo_finished.isSelected()
-                                    ? "RunMedia/Production/Projects/" + year + "/" + folderName
-                                    : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
-                        }
-                        String finalOutput = "Project Name:\n" + pn + "\n\n" +
-                                "Project Location:\n" + projectLocation + "\n\n" + finalText;
-                        transcripts.put(file, finalOutput);
-                    }
-                } else {
-                    transcripts.put(file, finalText);
-                }
+                transcripts.put(file, finalText);
             }
         }
         runFinalEmbeddingProcess(confirmedTags);
@@ -775,27 +755,7 @@ public class MainInterface {
             if (json != null) {
                 FaceData fd = data.getOrDefault(video, new FaceData(new ArrayList<>(), new ArrayList<>()));
                 String finalText = showTranscriptReviewDialog(video, json, fd);
-                String pn = projectNames.get(video);
-                if (pn != null) {
-                    Object yearObj = combo_year.getSelectedItem();
-                    Object monthObj = combo_month.getSelectedItem();
-                    if (yearObj != null && monthObj != null) {
-                        int year = (int) yearObj;
-                        int month = monthCodeToNumber((String) monthObj);
-                        String folderName = String.format("%d_%02d_%s", year, month, pn.replace(" ", "_"));
-                        String projectLocation = getProjectLocationFromFile(video);
-                        if (projectLocation == null) {
-                            projectLocation = rdo_finished.isSelected()
-                                    ? "RunMedia/Production/Projects/" + year + "/" + folderName
-                                    : "RunMedia/Production/BROLL/" + year + "/Project_Stringouts/" + folderName;
-                        }
-                        String finalOutput = "Project Name:\n" + pn + "\n\n" +
-                                "Project Location:\n" + projectLocation + "\n\n" + finalText;
-                        transcripts.put(video, finalOutput);
-                    }
-                } else {
-                    transcripts.put(video, finalText);
-                }
+                transcripts.put(video, finalText);
             }
         }
     }
@@ -1253,7 +1213,7 @@ public class MainInterface {
                             "People: " + peopleStr + "\n" +
                             "Project Name: " + pn + "\n" +
                             "Project Location: " + projectLocation + "\n" +
-                            "Transcript:\n" + transcript;
+                            "Transcript: " + transcript;
 
                     try {
                         Path taggedFile;
