@@ -6,7 +6,7 @@
 
     <groupId>org.example</groupId>
     <artifactId>MediaTagger</artifactId>
-    <version>1.5 - Wicked: For Good</version>
+    <version>1.5.1 - Wicked: For Good</version>
     <build>
         <resources>
             <resource>
