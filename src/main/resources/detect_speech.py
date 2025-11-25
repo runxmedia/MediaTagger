@@ -3,8 +3,13 @@ import sys
 import json
 import torch
 import whisper
+import numpy as np
 from pyannote.audio import Pipeline
 import traceback
+import logging
+
+# By default, do not configure logging to avoid overly verbose output from libraries like Whisper and Pyannote.
+# High-level status and errors are still printed to stdout/stderr.
 
 def transcribe_video(path, hf_token):
     ffmpeg_paths = ["/opt/homebrew/bin", "/usr/local/bin"]
@@ -16,22 +21,21 @@ def transcribe_video(path, hf_token):
     elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
         device = "mps"
     else:
+        print("No GPU or MPS device found. This script requires hardware acceleration.", file=sys.stderr)
         raise RuntimeError("GPU or MPS device required. CPU fallback is not supported.")
 
-    # --- START OF FIX FOR LibsndfileError ---
-    # 1. Load the audio waveform using whisper, which can handle video files.
-    #    This returns a NumPy array.
-    print("Loading audio waveform...")
-    audio_waveform = whisper.load_audio(path)
-    print("Finished loading audio waveform.")
-    # --- END OF FIX ---
+    try:
+        audio_waveform = whisper.load_audio(path)
+        if audio_waveform.size == 0:
+            print("Warning: Audio waveform is empty.", file=sys.stderr)
+    except Exception as e:
+        print(f"Error loading audio: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        raise
 
     print("PROGRESS:10", flush=True)
 
-    print("Loading whisper model...")
     model = whisper.load_model("large-v2", device="cpu")
-    print("Finished loading whisper model.")
-
 
     alignment_heads = model.alignment_heads
     model.alignment_heads = None
@@ -48,45 +52,53 @@ def transcribe_video(path, hf_token):
 
     whisper.timing.dtw = patched_dtw
 
-    # Transcribe using the loaded audio waveform
-    print("Starting transcription...")
-    # --- START OF FIX for ValueError with NaN on MPS ---
     # Disable fp16 to prevent numerical instability on Apple Silicon devices.
-    result = model.transcribe(audio_waveform, word_timestamps=True, fp16=False)
-    # --- END OF FIX ---
-    print("Finished transcription.")
+    transcribe_options = {"word_timestamps": True, "fp16": False, "verbose": False}
+
+    result = model.transcribe(audio_waveform, **transcribe_options)
+
+    # Check if MPS failed to produce text (common issue on specific PyTorch versions on Mac)
+    if not result.get("text", "").strip() and device == "mps":
+        print("Warning: Whisper produced no text on MPS. This is a known PyTorch/MPS issue.", file=sys.stderr)
+        print("Attempting fallback: Retrying transcription on CPU...", file=sys.stderr)
+
+        # Move model to CPU and retry
+        model = model.to("cpu")
+        result = model.transcribe(audio_waveform, **transcribe_options)
+
+        if result.get("text", "").strip():
+            print("Success: CPU fallback produced text.", file=sys.stderr)
+
+    if not result.get("text", "").strip():
+        print("Warning: Whisper produced no text.", file=sys.stderr)
+        print(f"Full transcription result: {result}", file=sys.stderr)
+
     print("PROGRESS:60", flush=True)
 
-    print("Loading diarization model...")
     diarize_model = Pipeline.from_pretrained(
-        "pyannote/speaker-diarization-3.1", use_auth_token=hf_token
+        "pyannote/speaker-diarization-3.1",
+        token=hf_token,
     )
+    # We use the original 'device' variable here to ensure Diarization still uses GPU
     diarize_model.to(torch.device(device))
-    print("Finished loading diarization model.")
 
-
-    # --- START OF FIX FOR LibsndfileError ---
-    # 2. Prepare the audio for pyannote. It expects a dictionary containing a
-    #    2D torch.Tensor (channels, samples) and the sample rate.
     audio_for_diarization = {
         "waveform": torch.from_numpy(audio_waveform).unsqueeze(0),
         "sample_rate": whisper.audio.SAMPLE_RATE,
     }
 
-    # 3. Pass the in-memory audio data to the diarization model.
-    print("Starting diarization...")
-    diarization = diarize_model(audio_for_diarization)
-    print("Finished diarization.")
-    # --- END OF FIX ---
+    diarization_out = diarize_model(audio_for_diarization)
+
+    if hasattr(diarization_out, 'speaker_diarization') and diarization_out.speaker_diarization:
+        annotation = diarization_out.speaker_diarization
+    else:
+        annotation = diarization_out
 
     segments = []
-    print("Processing diarization segments...")
-    for turn, _, speaker in diarization.itertracks(yield_label=True):
-        segments.append({"start": turn.start, "end": turn.end, "speaker": speaker})
-    print("Finished processing diarization segments.")
+    if annotation:
+        for turn, _, speaker in annotation.itertracks(yield_label=True):
+            segments.append({"start": turn.start, "end": turn.end, "speaker": speaker})
 
-
-    print("Assigning speakers to words...")
     for seg in result.get("segments", []):
         word_speakers = []
         for word in seg.get("words", []):
@@ -100,9 +112,7 @@ def transcribe_video(path, hf_token):
                 word_speakers.append(spk)
         if word_speakers:
             seg["speaker"] = max(set(word_speakers), key=word_speakers.count)
-    print("Finished assigning speakers to words.")
 
-    # Remove any segments that have no text after trimming
     filtered = [s for s in result.get("segments", []) if s.get("text", "").strip()]
     result["segments"] = filtered
     print("PROGRESS:90", flush=True)
@@ -122,12 +132,8 @@ def main():
         print("PROGRESS:100", flush=True)
         print("RESULTS:" + json.dumps(result), flush=True)
     except Exception:
-        log_dir = os.path.expanduser("~/Desktop")
-        os.makedirs(log_dir, exist=True)
-        log_file = os.path.join(log_dir, "detect_speech.log")
-        with open(log_file, "w") as f:
-            traceback.print_exc(file=f)
-        print(f"❌ Speech detection failed. See {log_file} for details.", file=sys.stderr)
+        print("An error occurred during speech detection:", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":

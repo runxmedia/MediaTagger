@@ -58,6 +58,15 @@ run_setup() {
   fi
 
   # --- Step 3: Check for and Install Python ---
+  # Uninstall Homebrew Python 3.9 if present ---
+  # We avoid Python 3.9 because some of the audio/ML libraries we depend on no longer support it well.
+  if "$BREW_CMD" list --versions python@3.9 >/dev/null 2>&1; then
+    echo "Homebrew python@3.9 detected; uninstalling it to prevent accidental use..."
+    if ! "$BREW_CMD" uninstall python@3.9; then
+      echo "Warning: Failed to uninstall Homebrew python@3.9. You may not have it installed via Homebrew, or permissions are missing."
+    fi
+  fi
+
   echo "Searching for Python 3.11 or 3.10..."
   PYTHON_CMD=""
   # Prefer a compatible version of Python. WhisperX does not support 3.13+.
@@ -66,14 +75,17 @@ run_setup() {
   done
 
   if [ -n "$PYTHON_CMD" ]; then
-    # Verify the found Python version is < 3.13
+    # Verify we are using Python 3.10–3.12.
+    # WhisperX is not tested on 3.13+ and we explicitly avoid 3.9-.
     PY_VER=$("$PYTHON_CMD" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
     MAJOR=${PY_VER%%.*}
     MINOR=${PY_VER#*.}
-    if [ "$MAJOR" -ne 3 ] || [ "$MINOR" -ge 13 ]; then
+    if [ "$MAJOR" -ne 3 ] || [ "$MINOR" -lt 10 ] || [ "$MINOR" -ge 13 ]; then
+      echo "Found Python $PY_VER but need 3.10–3.12; ignoring this interpreter."
       PYTHON_CMD=""
     fi
   fi
+
 
   if [ -z "$PYTHON_CMD" ]; then
     echo "Compatible Python not found. Installing Python 3.11 with Homebrew..."
@@ -90,10 +102,17 @@ run_setup() {
   # --- Step 4: Install Python Dependencies ---
   echo "Installing Python face recognition libraries using $PYTHON_CMD..."
   "$PYTHON_CMD" -m pip install --upgrade pip
-  "$PYTHON_CMD" -m pip install --break-system-packages --user numpy torch torchaudio insightface faiss-cpu opencv-python tqdm onnxruntime
+
+  # Core numerical + ML stack (let pip choose compatible torch/torchaudio versions)
+  "$PYTHON_CMD" -m pip install --break-system-packages --user \
+    "numpy>=2.3" torch torchaudio insightface faiss-cpu opencv-python tqdm onnxruntime
+
+  # WhisperX speech-to-text
   "$PYTHON_CMD" -m pip install --break-system-packages --user openai-whisper
-  # Install diarization dependencies
-  "$PYTHON_CMD" -m pip install --break-system-packages --user pyannote.audio
+
+  # Diarization stack – pin pyannote.audio high enough to avoid deprecated torchaudio backend APIs
+  "$PYTHON_CMD" -m pip install --break-system-packages --user "pyannote.audio>=4.0.1"
+
 
   # --- Step 5: Download Diarization Model ---
   echo "Downloading pyannote/speaker-diarization-3.1 model..."
@@ -104,7 +123,7 @@ import sys
 # The token is passed in from the shell script variable
 token = "${HF_TOKEN}"
 try:
-    snapshot_download("pyannote/speaker-diarization-3.1", use_auth_token=token, resume_download=True)
+    snapshot_download("pyannote/speaker-diarization-3.1", token=token, resume_download=True)
     print("Model download complete.")
 except Exception as e:
     print(f"Failed to download model: {e}", file=sys.stderr)

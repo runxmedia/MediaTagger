@@ -30,6 +30,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -103,6 +104,8 @@ public class MainInterface {
     private final JLabel transcriptBanner;
     private final Border defaultBorder;
     private final Border redBorder = BorderFactory.createLineBorder(Color.RED, 2);
+    private JDialog debugDialog;
+    private JTextArea debugTextArea;
 
     public static void main(String[] args) {
         FlatLightLaf.setup();
@@ -760,6 +763,37 @@ public class MainInterface {
         }
     }
 
+    private static class StreamUpdate {
+        enum Type { STDOUT, STDERR }
+        final Type type;
+        final String line;
+        StreamUpdate(Type type, String line) { this.type = type; this.line = line; }
+    }
+
+    private void showRealtimeDebugWindow(String title) {
+        if (debugDialog == null) {
+            debugDialog = new JDialog(frame, "Debug Output", false); // non-modal
+            debugTextArea = new JTextArea();
+            debugTextArea.setEditable(false);
+            debugTextArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
+            JScrollPane scrollPane = new JScrollPane(debugTextArea);
+            scrollPane.setPreferredSize(new Dimension(800, 600));
+            debugDialog.add(scrollPane);
+            debugDialog.pack();
+            debugDialog.setLocationRelativeTo(frame);
+        }
+        debugDialog.setTitle("Debug Output: " + title);
+        debugTextArea.setText(""); // Clear for new process
+        debugDialog.setVisible(true);
+    }
+
+    private void appendToRealtimeDebug(String text) {
+        if (debugTextArea != null && debugDialog != null && debugDialog.isVisible()) {
+            debugTextArea.append(text);
+            debugTextArea.setCaretPosition(debugTextArea.getDocument().getLength());
+        }
+    }
+
     private Map<File, FaceData> runAllFaceRecognition(List<File> videos) {
         final JDialog progressDialog = new JDialog(frame, "Processing Videos...", true);
         if (this.appIcon != null) {
@@ -803,7 +837,7 @@ public class MainInterface {
         final Process[] processHolder = new Process[1];
         final int[] currentVideoIndex = {0};
 
-        SwingWorker<Map<File, FaceData>, Void> worker = new SwingWorker<>() {
+        SwingWorker<Map<File, FaceData>, StreamUpdate> worker = new SwingWorker<>() {
             @Override
             protected Map<File, FaceData> doInBackground() throws Exception {
                 Map<File, FaceData> results = new HashMap<>();
@@ -899,40 +933,89 @@ public class MainInterface {
                         Process speechProcess = speechPb.start();
                         SwingUtilities.invokeLater(() -> statusLabel.setText(videoName + " - Detecting Speech"));
 
-                        try (
-                                BufferedReader speechReader = new BufferedReader(new InputStreamReader(speechProcess.getInputStream()));
-                                BufferedReader speechError = new BufferedReader(new InputStreamReader(speechProcess.getErrorStream()))
-                        ) {
-                            String line;
-                            StringBuilder speechResult = new StringBuilder();
-                            while ((line = speechReader.readLine()) != null) {
-                                if (line.startsWith("PROGRESS:")) {
-                                    int val = Integer.parseInt(line.substring(9));
-                                    int mapped = (int) ((transcriptOnlyMode ? 0 : stepWeight) + val * stepWeight / 100.0);
-                                    setProgress(mapped);
-                                    final String stepTxt = val < 60 ? "Detecting Speech" : "Identifying Speakers";
-                                    SwingUtilities.invokeLater(() -> statusLabel.setText(videoName + " - " + stepTxt));
-                                } else if (line.startsWith("RESULTS:")) {
-                                    speechResult.append(line.substring(8));
-                                } else {
-                                    System.out.println("Speech stdout: " + line);
-                                }
+                        if (tags.contains("DEBUG")) {
+                            try {
+                                SwingUtilities.invokeAndWait(() -> showRealtimeDebugWindow(videoName));
+                            } catch (Exception e) {
+                                e.printStackTrace();
                             }
+                        }
 
-                            int speechCode = speechProcess.waitFor();
-                            if (speechCode != 0) {
-                                final String errorOutput = speechError.lines().collect(Collectors.joining("\n"));
-                                final String errorMessage = "The speech detection failed for file '" + videoName + "' (exit code " + speechCode + ").\n\nError:\n" + errorOutput;
-                                SwingUtilities.invokeLater(() ->
-                                        JOptionPane.showMessageDialog(frame, errorMessage, "Speech Detection Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon))
-                                );
-                            } else if (!speechResult.isEmpty()) {
-                                transcripts.put(video, speechResult.toString());
+                        final StringBuilder speechResult = new StringBuilder();
+                        final StringBuilder stderrOutput = new StringBuilder();
+                        final AtomicBoolean cpuFallback = new AtomicBoolean(false);
+
+                        Thread stdoutReader = new Thread(() -> {
+                            try (BufferedReader reader = new BufferedReader(new InputStreamReader(speechProcess.getInputStream()))) {
+                                String line;
+                                while ((line = reader.readLine()) != null) {
+                                    publish(new StreamUpdate(StreamUpdate.Type.STDOUT, line));
+                                    if (line.startsWith("PROGRESS:")) {
+                                        int val = Integer.parseInt(line.substring(9));
+                                        int mapped = (int) ((transcriptOnlyMode ? 0 : stepWeight) + val * stepWeight / 100.0);
+                                        setProgress(mapped);
+                                        final String stepTxt;
+                                        if (cpuFallback.get()) {
+                                            stepTxt = val < 60 ? "Detecting Speech (Falling back to slow mode)" : "Identifying Speakers";
+                                        } else {
+                                            stepTxt = val < 60 ? "Detecting Speech" : "Identifying Speakers";
+                                        }
+                                        SwingUtilities.invokeLater(() -> statusLabel.setText(videoName + " - " + stepTxt));
+                                    } else if (line.startsWith("RESULTS:")) {
+                                        speechResult.append(line.substring(8));
+                                    } else {
+                                        System.out.println("Speech stdout: " + line);
+                                    }
+                                }
+                            } catch (IOException e) {
+                                publish(new StreamUpdate(StreamUpdate.Type.STDERR, "Error reading stdout: " + e.getMessage()));
                             }
+                        });
+
+                        Thread stderrReader = new Thread(() -> {
+                            try (BufferedReader reader = new BufferedReader(new InputStreamReader(speechProcess.getErrorStream()))) {
+                                String line;
+                                while ((line = reader.readLine()) != null) {
+                                    publish(new StreamUpdate(StreamUpdate.Type.STDERR, line));
+                                    stderrOutput.append(line).append("\n");
+                                    if (line.contains("Whisper produced no text on MPS")) {
+                                        cpuFallback.set(true);
+                                        SwingUtilities.invokeLater(() -> statusLabel.setText(videoName + " - Detecting Speech (Falling back to slow mode)"));
+                                    }
+                                }
+                            } catch (IOException e) {
+                                publish(new StreamUpdate(StreamUpdate.Type.STDERR, "Error reading stderr: " + e.getMessage()));
+                            }
+                        });
+
+                        stdoutReader.start();
+                        stderrReader.start();
+
+                        int speechCode = speechProcess.waitFor();
+                        stdoutReader.join();
+                        stderrReader.join();
+
+                        if (speechCode != 0) {
+                            final String errorText = stderrOutput.toString();
+                            final String errorMessage = "The speech detection failed for file '" + videoName + "' (exit code " + speechCode + ").\n\nError:\n" + errorText;
+                            SwingUtilities.invokeLater(() ->
+                                    JOptionPane.showMessageDialog(frame, errorMessage, "Speech Detection Error", JOptionPane.ERROR_MESSAGE, new ImageIcon(appIcon))
+                            );
+                        } else if (!speechResult.isEmpty()) {
+                            transcripts.put(video, speechResult.toString());
                         }
                     }
                 }
                 return results;
+            }
+
+            @Override
+            protected void process(List<StreamUpdate> chunks) {
+                if (tags.contains("DEBUG")) {
+                    for (StreamUpdate update : chunks) {
+                        appendToRealtimeDebug(update.type + ": " + update.line + "\n");
+                    }
+                }
             }
 
             @Override
@@ -970,6 +1053,7 @@ public class MainInterface {
             return null;
         } catch (InterruptedException | ExecutionException e) {
             System.err.println("An error occurred during face recognition execution.");
+            e.printStackTrace();
             return null;
         }
     }
